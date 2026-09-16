@@ -1,0 +1,21 @@
+[Unit]
+Description=STIEI Intelligent Driving Web Console
+After=network-online.target docker.service display-manager.service
+Wants=network-online.target docker.service
+
+[Service]
+Type=simple
+User=root
+Group=root
+WorkingDirectory=/home/nvidia/Desktop/bigcar-console
+ExecStart=/usr/bin/python3 /home/nvidia/Desktop/bigcar-console/backend/app.py --host 0.0.0.0 --port 8765
+Restart=on-failure
+RestartSec=3
+TimeoutStopSec=10
+Environment=PYTHONUNBUFFERED=1
+NoNewPrivileges=true
+ProtectSystem=full
+ReadWritePaths=/home/nvidia/Desktop/bigcar-console/runtime /var/run/docker.sock
+
+[Install]
+WantedBy=multi-user.target

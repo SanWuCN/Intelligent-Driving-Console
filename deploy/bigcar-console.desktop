@@ -1,0 +1,9 @@
+[Desktop Entry]
+Version=1.0
+Type=Application
+Name=智能驾驶控制台
+Comment=打开 Autoware 大车网页控制台
+Exec=firefox --new-window http://127.0.0.1:8765
+Icon=applications-engineering
+Terminal=false
+Categories=Development;Engineering;

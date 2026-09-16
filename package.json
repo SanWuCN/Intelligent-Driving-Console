@@ -1,0 +1,30 @@
+{
+  "name": "bigcar-console",
+  "private": true,
+  "version": "1.2.8",
+  "description": "Jetson AGX Orin + ROS 1 Melodic + Autoware.AI 1.14 智能驾驶网页控制台",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/SanWuCN/Intelligent-Driving-Console.git"
+  },
+  "type": "module",
+  "scripts": {
+    "dev": "vite --host 0.0.0.0",
+    "build": "tsc -b && vite build",
+    "preview": "vite preview --host 0.0.0.0",
+    "test": "python3 -m unittest discover -s tests -v"
+  },
+  "dependencies": {
+    "@vitejs/plugin-react": "latest",
+    "lucide-react": "latest",
+    "react": "latest",
+    "react-dom": "latest",
+    "vite": "latest"
+  },
+  "devDependencies": {
+    "@types/node": "^22.20.3",
+    "@types/react": "latest",
+    "@types/react-dom": "latest",
+    "typescript": "latest"
+  }
+}

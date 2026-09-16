@@ -1,0 +1,430 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<ui version="4.0">
+ <class>MainWindow</class>
+ <widget class="QMainWindow" name="MainWindow">
+  <property name="geometry">
+   <rect>
+    <x>0</x>
+    <y>0</y>
+    <width>1465</width>
+    <height>1044</height>
+   </rect>
+  </property>
+  <property name="windowTitle">
+   <string>HMI</string>
+  </property>
+  <widget class="QWidget" name="centralwidget">
+   <layout class="QHBoxLayout" name="horizontalLayout" stretch="1,1">
+    <item>
+     <widget class="QWidget" name="widget_8" native="true">
+      <layout class="QVBoxLayout" name="verticalLayout_3" stretch="1,1">
+       <item>
+        <widget class="QGroupBox" name="groupBox">
+         <property name="title">
+          <string>道路信息</string>
+         </property>
+         <layout class="QVBoxLayout" name="verticalLayout_4">
+          <item>
+           <widget class="QWidget" name="widget_4" native="true">
+            <layout class="QVBoxLayout" name="verticalLayout_2">
+             <item>
+              <widget class="QLabel" name="traffic_light_phase">
+               <property name="text">
+                <string>当前红绿灯相位：未有红绿灯信号</string>
+               </property>
+              </widget>
+             </item>
+             <item>
+              <widget class="QWidget" name="widget_5" native="true">
+               <layout class="QHBoxLayout" name="horizontalLayout_2" stretch="1,4">
+                <item>
+                 <widget class="QLabel" name="label_3">
+                  <property name="text">
+                   <string>倒计时：</string>
+                  </property>
+                 </widget>
+                </item>
+                <item>
+                 <widget class="QLCDNumber" name="traffic_light_sec"/>
+                </item>
+               </layout>
+              </widget>
+             </item>
+            </layout>
+           </widget>
+          </item>
+          <item>
+           <widget class="QLabel" name="vip_status">
+            <property name="text">
+             <string>是否为VIP：否</string>
+            </property>
+           </widget>
+          </item>
+          <item>
+           <widget class="QLabel" name="speed_limit">
+            <property name="text">
+             <string>道路限速：未有限速信息</string>
+            </property>
+           </widget>
+          </item>
+          <item>
+           <widget class="QLabel" name="traffic_person">
+            <property name="text">
+             <string>路口是否有行人：否</string>
+            </property>
+           </widget>
+          </item>
+         </layout>
+        </widget>
+       </item>
+       <item>
+        <widget class="QLabel" name="cam_view">
+         <property name="text">
+          <string/>
+         </property>
+        </widget>
+       </item>
+      </layout>
+     </widget>
+    </item>
+    <item>
+     <widget class="QWidget" name="widget_9" native="true">
+      <layout class="QVBoxLayout" name="verticalLayout" stretch="1,1,1">
+       <item>
+        <widget class="QGroupBox" name="groupBox_4">
+         <property name="title">
+          <string>雷达设置</string>
+         </property>
+         <layout class="QVBoxLayout" name="verticalLayout_7">
+          <item>
+           <widget class="QWidget" name="widget" native="true">
+            <layout class="QHBoxLayout" name="horizontalLayout_7" stretch="2,1,6">
+             <item>
+              <widget class="QLabel" name="label">
+               <property name="text">
+                <string>测距模式：</string>
+               </property>
+              </widget>
+             </item>
+             <item>
+              <widget class="QComboBox" name="f40_mode_select">
+               <property name="currentText">
+                <string>b5</string>
+               </property>
+               <property name="currentIndex">
+                <number>4</number>
+               </property>
+               <item>
+                <property name="text">
+                 <string>b1</string>
+                </property>
+               </item>
+               <item>
+                <property name="text">
+                 <string>b2</string>
+                </property>
+               </item>
+               <item>
+                <property name="text">
+                 <string>b3</string>
+                </property>
+               </item>
+               <item>
+                <property name="text">
+                 <string>b4</string>
+                </property>
+               </item>
+               <item>
+                <property name="text">
+                 <string>b5</string>
+                </property>
+               </item>
+               <item>
+                <property name="text">
+                 <string>b6</string>
+                </property>
+               </item>
+               <item>
+                <property name="text">
+                 <string>b7</string>
+                </property>
+               </item>
+               <item>
+                <property name="text">
+                 <string>b8</string>
+                </property>
+               </item>
+               <item>
+                <property name="text">
+                 <string>b9</string>
+                </property>
+               </item>
+               <item>
+                <property name="text">
+                 <string>ba</string>
+                </property>
+               </item>
+               <item>
+                <property name="text">
+                 <string>bb</string>
+                </property>
+               </item>
+               <item>
+                <property name="text">
+                 <string>bc</string>
+                </property>
+               </item>
+               <item>
+                <property name="text">
+                 <string>bd</string>
+                </property>
+               </item>
+               <item>
+                <property name="text">
+                 <string>be</string>
+                </property>
+               </item>
+              </widget>
+             </item>
+             <item>
+              <spacer name="horizontalSpacer_2">
+               <property name="orientation">
+                <enum>Qt::Horizontal</enum>
+               </property>
+               <property name="sizeHint" stdset="0">
+                <size>
+                 <width>451</width>
+                 <height>20</height>
+                </size>
+               </property>
+              </spacer>
+             </item>
+            </layout>
+           </widget>
+          </item>
+          <item>
+           <widget class="QWidget" name="widget_2" native="true">
+            <layout class="QHBoxLayout" name="horizontalLayout_6" stretch="1,1,5">
+             <item>
+              <widget class="QLabel" name="label_2">
+               <property name="text">
+                <string>碰撞距离阈值（毫米）：</string>
+               </property>
+              </widget>
+             </item>
+             <item>
+              <widget class="QLineEdit" name="warning_threshold_input">
+               <property name="toolTip">
+                <string>50 mm（5 cm）净安全距离，实际停车触发距离还包含传感器安装偏置</string>
+               </property>
+               <property name="text">
+                <string>50</string>
+               </property>
+              </widget>
+             </item>
+             <item>
+              <spacer name="horizontalSpacer_3">
+               <property name="orientation">
+                <enum>Qt::Horizontal</enum>
+               </property>
+               <property name="sizeHint" stdset="0">
+                <size>
+                 <width>451</width>
+                 <height>20</height>
+                </size>
+               </property>
+              </spacer>
+             </item>
+            </layout>
+           </widget>
+          </item>
+          <item>
+           <widget class="QWidget" name="widget_3" native="true">
+            <layout class="QHBoxLayout" name="horizontalLayout_3" stretch="1,7">
+             <item>
+              <widget class="QPushButton" name="apply_param_btn">
+               <property name="text">
+                <string>应用设置</string>
+               </property>
+              </widget>
+             </item>
+             <item>
+              <spacer name="horizontalSpacer">
+               <property name="orientation">
+                <enum>Qt::Horizontal</enum>
+               </property>
+               <property name="sizeHint" stdset="0">
+                <size>
+                 <width>559</width>
+                 <height>20</height>
+                </size>
+               </property>
+              </spacer>
+             </item>
+            </layout>
+           </widget>
+          </item>
+         </layout>
+        </widget>
+       </item>
+       <item>
+        <widget class="QGroupBox" name="groupBox_3">
+         <property name="title">
+          <string>FR-07 Pro线控底盘状态</string>
+         </property>
+         <layout class="QVBoxLayout" name="verticalLayout_8">
+          <item>
+           <widget class="QLabel" name="velocity">
+            <property name="text">
+             <string>速度绝对值：</string>
+            </property>
+           </widget>
+          </item>
+          <item>
+           <widget class="QLabel" name="steering">
+            <property name="text">
+             <string>转向：</string>
+            </property>
+           </widget>
+          </item>
+          <item>
+           <widget class="QLabel" name="gear">
+            <property name="text">
+             <string>挡位：</string>
+            </property>
+           </widget>
+          </item>
+          <item>
+           <widget class="QLabel" name="battery">
+            <property name="text">
+             <string>电量：</string>
+            </property>
+           </widget>
+          </item>
+          <item>
+           <widget class="QLabel" name="break_lamp">
+            <property name="text">
+             <string>刹车灯：</string>
+            </property>
+           </widget>
+          </item>
+          <item>
+           <widget class="QLabel" name="turn_lamp">
+            <property name="text">
+             <string>转向灯：</string>
+            </property>
+           </widget>
+          </item>
+          <item>
+           <widget class="QLabel" name="clearance_lamp">
+            <property name="text">
+             <string>示廓灯：</string>
+            </property>
+           </widget>
+          </item>
+         </layout>
+        </widget>
+       </item>
+       <item>
+        <widget class="QGroupBox" name="groupBox_2">
+         <property name="title">
+          <string>OBU信息</string>
+         </property>
+         <layout class="QHBoxLayout" name="horizontalLayout_4">
+          <item>
+           <widget class="QWidget" name="widget_6" native="true">
+            <layout class="QVBoxLayout" name="verticalLayout_6" stretch="1,1,4">
+             <item>
+              <widget class="QLabel" name="gnsStatus">
+               <property name="text">
+                <string>GNSS状态：</string>
+               </property>
+              </widget>
+             </item>
+             <item>
+              <widget class="QLabel" name="V2xCover">
+               <property name="text">
+                <string>V2X覆盖：</string>
+               </property>
+              </widget>
+             </item>
+             <item>
+              <spacer name="verticalSpacer">
+               <property name="orientation">
+                <enum>Qt::Vertical</enum>
+               </property>
+               <property name="sizeHint" stdset="0">
+                <size>
+                 <width>20</width>
+                 <height>121</height>
+                </size>
+               </property>
+              </spacer>
+             </item>
+            </layout>
+           </widget>
+          </item>
+          <item>
+           <widget class="QWidget" name="widget_7" native="true">
+            <layout class="QVBoxLayout" name="verticalLayout_5">
+             <item>
+              <widget class="QLabel" name="lon">
+               <property name="text">
+                <string>经度：</string>
+               </property>
+              </widget>
+             </item>
+             <item>
+              <widget class="QLabel" name="lat">
+               <property name="text">
+                <string>纬度：</string>
+               </property>
+              </widget>
+             </item>
+             <item>
+              <widget class="QLabel" name="ele">
+               <property name="text">
+                <string>海拔：</string>
+               </property>
+              </widget>
+             </item>
+             <item>
+              <widget class="QLabel" name="hea">
+               <property name="text">
+                <string>方向：</string>
+               </property>
+              </widget>
+             </item>
+             <item>
+              <widget class="QLabel" name="spd">
+               <property name="text">
+                <string>速度绝对值：</string>
+               </property>
+              </widget>
+             </item>
+            </layout>
+           </widget>
+          </item>
+         </layout>
+        </widget>
+       </item>
+      </layout>
+     </widget>
+    </item>
+   </layout>
+  </widget>
+  <widget class="QMenuBar" name="menubar">
+   <property name="geometry">
+    <rect>
+     <x>0</x>
+     <y>0</y>
+     <width>1465</width>
+     <height>23</height>
+    </rect>
+   </property>
+  </widget>
+  <widget class="QStatusBar" name="statusbar"/>
+ </widget>
+ <resources/>
+ <connections/>
+</ui>

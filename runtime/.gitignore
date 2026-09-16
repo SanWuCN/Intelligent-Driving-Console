@@ -1,0 +1,6 @@
+*
+!.gitignore
+!config.example.json
+!logs/
+logs/*
+!logs/.gitkeep

@@ -1,0 +1,10 @@
+{
+  "container": "autoware_ai_orin",
+  "data_dir": "/home/nvidia/Desktop",
+  "control_token": "replace-with-a-random-secret",
+  "listen": "0.0.0.0",
+  "port": 8765,
+  "display": ":0",
+  "xauthority": "/run/user/1000/gdm/Xauthority",
+  "screen_size": "1920x1080"
+}

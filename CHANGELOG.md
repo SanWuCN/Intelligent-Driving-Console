@@ -1,0 +1,20 @@
+# Changelog
+
+## 1.2.8
+
+- Pure Pursuit 最小前视距离设为 2 m。
+- 循迹速度上限设为 0.2 m/s。
+- Autoware `velocity_set` 障碍停车距离设为 5 cm。
+- 打通 `/ctrl_raw → /ctrl_cmd → CAN` 链路。
+- 只有 `/ctrl_cmd` 有实时消息时才标记循迹运行。
+
+## 1.2.2
+
+- 收到 RViz `2D Pose Estimate` 后再启动 NDT。
+- 标定前提供临时 TF，使点云地图和实时雷达同时显示。
+- Runtime Manager 开关同步真实 ROS 节点状态。
+
+## 1.0.0
+
+- 完成 React 前端、Python 后端和六步启动流程。
+- 增加学校品牌、RViz 实时画面、路径预览、控制令牌、急停和日志。

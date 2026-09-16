@@ -1,0 +1,13 @@
+node_modules/
+dist/
+runtime/config.json
+runtime/*.pid
+runtime/logs/*.log
+*.pyc
+__pycache__/
+.DS_Store
+*.tsbuildinfo
+vite.config.js
+vite.config.d.ts
+.idea/
+.vscode/
