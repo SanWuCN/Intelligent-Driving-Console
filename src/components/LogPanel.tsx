@@ -17,7 +17,7 @@ export function LogPanel({ logs }: { logs: LogEntry[] }) {
       {open ? (
         <div className="log-table" role="log" aria-live="polite">
           <div className="log-row log-head"><span>时间</span><span>级别</span><span>模块</span><span>消息</span></div>
-          {visible.length ? visible.slice(-7).map((entry, index) => (
+          {visible.length ? visible.map((entry, index) => (
             <div className="log-row" key={`${entry.time}-${index}`}>
               <time>{entry.time}</time><strong className={entry.level.toLowerCase()}>{entry.level}</strong><span>{entry.module}</span><p>{entry.message}</p>
             </div>

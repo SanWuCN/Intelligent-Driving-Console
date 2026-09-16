@@ -19,8 +19,15 @@ except ImportError:  # pragma: no cover - Jetson image normally provides psutil
     psutil = None
 
 
-VERSION = "1.2.8"
+VERSION = "1.3.0"
 ROS_SETUP = "source /opt/ros/melodic/setup.bash; source /root/autoware_1.14.0/install/setup.bash"
+
+DEFAULT_PARAMETERS = {
+    "speed_limit_mps": 0.2,
+    "lookahead_distance_m": 2.0,
+    "obstacle_stop_distance_m": 0.05,
+    "auto_loop": True,
+}
 
 
 class ControllerError(RuntimeError):
@@ -47,6 +54,7 @@ class BigCarController:
         self._sim_stage = 1
         self._ros_cache: Tuple[float, Set[str], Set[str]] = (0.0, set(), set())
         self._live_cache: Tuple[float, Set[str]] = (0.0, set())
+        self._screen_tickets: Dict[str, float] = {}
         self.log("INFO", "system", "智能驾驶控制台后端已启动")
         if self.simulate:
             self.log("WARN", "system", "当前为演示模式，不会执行车端命令")
@@ -58,12 +66,18 @@ class BigCarController:
         config = {
             "container": "autoware_ai_orin",
             "data_dir": "/home/nvidia/Desktop",
-            "control_token": secrets.token_urlsafe(24),
+            "control_token": "801801801",
             "listen": "0.0.0.0",
             "port": 8765,
             "display": ":0",
             "xauthority": "/run/user/1000/gdm/Xauthority",
             "screen_size": "1920x1080",
+            "vnc_host": "127.0.0.1",
+            "vnc_port": 5900,
+            "vnc_password": "",
+            "selected_map": "",
+            "selected_route": "",
+            "parameters": DEFAULT_PARAMETERS.copy(),
         }
         self.config_path.write_text(json.dumps(config, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
         try:
@@ -71,6 +85,35 @@ class BigCarController:
         except OSError:
             pass
         return config
+
+    def _save_config(self) -> None:
+        temporary = self.config_path.with_suffix(".json.tmp")
+        temporary.write_text(json.dumps(self.config, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+        temporary.replace(self.config_path)
+        try:
+            self.config_path.chmod(0o600)
+        except OSError:
+            pass
+
+    def parameters(self) -> Dict[str, Any]:
+        configured = self.config.get("parameters", {})
+        return {**DEFAULT_PARAMETERS, **configured} if isinstance(configured, dict) else DEFAULT_PARAMETERS.copy()
+
+    def issue_screen_ticket(self) -> Dict[str, Any]:
+        ticket = secrets.token_urlsafe(24)
+        now = time.monotonic()
+        with self._lock:
+            self._screen_tickets = {key: expiry for key, expiry in self._screen_tickets.items() if expiry > now}
+            self._screen_tickets[ticket] = now + 30.0
+        return {"ticket": ticket, "password": str(self.config.get("vnc_password", ""))}
+
+    def consume_screen_ticket(self, ticket: str) -> Optional[Tuple[str, int]]:
+        now = time.monotonic()
+        with self._lock:
+            expiry = self._screen_tickets.pop(ticket, 0.0)
+        if expiry <= now:
+            return None
+        return str(self.config.get("vnc_host", "127.0.0.1")), int(self.config.get("vnc_port", 5900))
 
     @property
     def control_token(self) -> str:
@@ -236,6 +279,117 @@ class BigCarController:
             raise ControllerError(f"文件不存在：{name}")
         return path
 
+    def _save_selection(self, data: Dict[str, Any]) -> None:
+        selected_map = str(data.get("map", ""))
+        selected_route = str(data.get("route", ""))
+        if selected_map:
+            self.resolve_data_file(selected_map, ".pcd")
+        if selected_route:
+            self.resolve_data_file(selected_route, ".csv")
+        with self._lock:
+            self.config["selected_map"] = selected_map
+            self.config["selected_route"] = selected_route
+            self._save_config()
+        self.log("INFO", "files", f"已保存默认文件：{selected_map or '未选地图'} / {selected_route or '未选路径'}")
+
+    @staticmethod
+    def _bounded_float(data: Dict[str, Any], name: str, minimum: float, maximum: float) -> float:
+        try:
+            value = float(data[name])
+        except (KeyError, TypeError, ValueError):
+            raise ControllerError(f"参数 {name} 不是有效数值")
+        if not math.isfinite(value) or not minimum <= value <= maximum:
+            raise ControllerError(f"参数 {name} 必须在 {minimum} 至 {maximum} 之间")
+        return value
+
+    def _publish_live_parameters(self, parameters: Dict[str, Any]) -> None:
+        if self.simulate or not self._container_running():
+            return
+        speed_mps = float(parameters["speed_limit_mps"])
+        lookahead_m = float(parameters["lookahead_distance_m"])
+        stop_distance_m = float(parameters["obstacle_stop_distance_m"])
+        follower = (
+            "{header: {stamp: now}, param_flag: 0, "
+            f"velocity: {speed_mps:.4f}, lookahead_distance: {lookahead_m:.4f}, "
+            f"lookahead_ratio: 2.0, minimum_lookahead_distance: {lookahead_m:.4f}, "
+            "displacement_threshold: 0.0, relative_angle_threshold: 0.0}"
+        )
+        replanner = (
+            "{multi_lane_csv: '', replanning_mode: true, use_decision_maker: false, "
+            f"velocity_max: {speed_mps * 3.6:.4f}, velocity_min: {min(speed_mps, 0.1) * 3.6:.4f}, "
+            "accel_limit: 0.5, decel_limit: 0.3, radius_thresh: 20.0, radius_min: 6.0, "
+            "resample_mode: false, resample_interval: 1.0, velocity_offset: 4, end_point_offset: 1, "
+            "braking_distance: 5, replan_curve_mode: false, replan_endpoint_mode: false, "
+            "overwrite_vmax_mode: false, realtime_tuning_mode: true}"
+        )
+        velocity_set = (
+            "{header: {stamp: now}, "
+            f"stop_distance_obstacle: {stop_distance_m:.4f}, stop_distance_stopline: 5.0, "
+            "detection_range: 1.3, threshold_points: 10, detection_height_top: 0.2, "
+            "detection_height_bottom: -1.7, deceleration_obstacle: 0.8, "
+            "deceleration_stopline: 0.6, velocity_change_limit: 9.972, "
+            "deceleration_range: 0.0, temporal_waypoints_size: 100.0}"
+        )
+        commands = [
+            ("/config/waypoint_follower", "autoware_config_msgs/ConfigWaypointFollower", follower),
+            ("/config/waypoint_replanner", "autoware_config_msgs/ConfigWaypointReplanner", replanner),
+            ("/config/velocity_set", "autoware_config_msgs/ConfigVelocitySet", velocity_set),
+        ]
+        for topic, message_type, payload in commands:
+            result = self._ros(f"rostopic pub -1 {topic} {message_type} {shlex.quote(payload)}", timeout=6)
+            if result.returncode != 0:
+                raise ControllerError(f"实时参数下发失败（{topic}）：{result.stdout.strip()}")
+
+    def _update_parameters(self, data: Dict[str, Any]) -> None:
+        parameters = {
+            "speed_limit_mps": self._bounded_float(data, "speed_limit_mps", 0.05, 0.5),
+            "lookahead_distance_m": self._bounded_float(data, "lookahead_distance_m", 0.5, 5.0),
+            "obstacle_stop_distance_m": self._bounded_float(data, "obstacle_stop_distance_m", 0.05, 3.0),
+            "auto_loop": bool(data.get("auto_loop", True)),
+        }
+        with self._lock:
+            self.config["parameters"] = parameters
+            self._save_config()
+        self._publish_live_parameters(parameters)
+        self.log(
+            "INFO",
+            "tuning",
+            f"参数已更新：限速 {parameters['speed_limit_mps']:.2f} m/s，前视 {parameters['lookahead_distance_m']:.2f} m，障碍停车 {parameters['obstacle_stop_distance_m']:.2f} m",
+        )
+
+    def _prepare_loop_route(self, source: Path, speed_mps: float, laps: int = 200) -> Path:
+        with source.open("r", encoding="utf-8-sig", errors="ignore", newline="") as handle:
+            rows = list(csv.reader(handle))
+        if not rows:
+            raise ControllerError("路径文件为空")
+        numeric: List[Tuple[int, float, float]] = []
+        for index, row in enumerate(rows):
+            if len(row) < 2:
+                continue
+            try:
+                numeric.append((index, float(row[0]), float(row[1])))
+            except (TypeError, ValueError):
+                continue
+        if len(numeric) < 3:
+            raise ControllerError("路径航点太少，无法循环")
+        gap = math.hypot(numeric[-1][1] - numeric[0][1], numeric[-1][2] - numeric[0][2])
+        if gap > 2.0:
+            raise ControllerError(f"路径未闭环：终点距起点 {gap:.2f} m，为防止横穿地图已禁止自动循环")
+        header_rows = rows[:numeric[0][0]]
+        waypoint_rows = [list(rows[index]) for index, _x, _y in numeric]
+        velocity_kph = speed_mps * 3.6
+        for row in waypoint_rows:
+            if len(row) >= 5:
+                row[4] = f"{velocity_kph:.4f}"
+        target = self.runtime / "loop_route.csv"
+        with target.open("w", encoding="utf-8", newline="") as handle:
+            writer = csv.writer(handle)
+            writer.writerows(header_rows)
+            for _ in range(laps):
+                writer.writerows(waypoint_rows)
+        self.log("INFO", "loop", f"已生成 {laps} 圈连续路径，闭环误差 {gap:.2f} m")
+        return target
+
     def route_data(self, name: str) -> Dict[str, Any]:
         path = self.resolve_data_file(name, ".csv")
         points: List[Dict[str, float]] = []
@@ -374,6 +528,9 @@ class BigCarController:
             "telemetry": {"cpu_percent": cpu, "memory_percent": memory, "temperature_c": self._temperature(), "can0": self._can_state(), "node_count": len(nodes), "topic_count": len(topics)},
             "maps": self.list_files(".pcd"),
             "routes": self.list_files(".csv"),
+            "selected_map": str(self.config.get("selected_map", "")),
+            "selected_route": str(self.config.get("selected_route", "")),
+            "parameters": self.parameters(),
             "logs": logs,
             "timestamp": time.time(),
             "last_error": last_error,
@@ -458,6 +615,8 @@ class BigCarController:
             if not self._contains(nodes, "base_link_to_localizer", "robot_state_publisher"):
                 raise ControllerError("Autoware 基础节点尚未就绪，请先完成上一步")
             map_path = self.resolve_data_file(str(data.get("map", "")), ".pcd")
+            self.config["selected_map"] = map_path.name
+            self._save_config()
             container_path = f"/from_host/{map_path.name}"
             self._start_process("map_loader", f"roslaunch map_file points_map_loader.launch path_pcd:={shlex.quote(container_path)}")
             self._start_process("vel_pose", "roslaunch autoware_connector vel_pose_connect.launch topic_pose_stamped:=/ndt_pose topic_twist_stamped:=/estimate_twist")
@@ -470,12 +629,21 @@ class BigCarController:
                 raise ControllerError("尚未完成 RViz 人工初始位姿标定，/current_pose 没有实时数据")
             route_path = self.resolve_data_file(str(data.get("route", "")), ".csv")
             self.route_data(route_path.name)
-            container_path = f"/from_host/{route_path.name}"
+            parameters = self.parameters()
+            speed_mps = float(parameters["speed_limit_mps"])
+            if bool(parameters["auto_loop"]):
+                loop_path = self._prepare_loop_route(route_path, speed_mps)
+                container_path = f"/from_host/bigcar-console/runtime/{loop_path.name}"
+            else:
+                container_path = f"/from_host/{route_path.name}"
+            self.config["selected_route"] = route_path.name
+            self._save_config()
             self._start_process(
                 "waypoint_loader",
                 f"roslaunch waypoint_maker waypoint_loader.launch load_csv:=true "
                 f"multi_lane_csv:={shlex.quote(container_path)} replanning_mode:=true "
-                "velocity_max:=0.72 resample_mode:=false replan_endpoint_mode:=false",
+                f"realtime_tuning_mode:=true velocity_max:={speed_mps * 3.6:.4f} "
+                f"velocity_min:={min(speed_mps, 0.1) * 3.6:.4f} resample_mode:=false replan_endpoint_mode:=false",
             )
             self._start_process("lane_rule", "roslaunch lane_planner lane_rule_option.launch")
             self._start_process("lane_stop", "rosrun lane_planner lane_stop")
@@ -485,7 +653,7 @@ class BigCarController:
                 "velocity_set",
                 "roslaunch waypoint_planner velocity_set.launch "
                 "use_crosswalk_detection:=false enable_multiple_crosswalk_detection:=false "
-                "points_topic:=points_no_ground stop_distance_obstacle:=0.05",
+                f"points_topic:=points_no_ground stop_distance_obstacle:={float(parameters['obstacle_stop_distance_m']):.4f}",
             )
             return
         if action == "start_tracking":
@@ -509,8 +677,11 @@ class BigCarController:
             self._start_process(
                 "pure_pursuit",
                 "roslaunch pure_pursuit pure_pursuit.launch "
-                "publishes_for_steering_robot:=true minimum_lookahead_distance:=2.0",
+                "publishes_for_steering_robot:=true velocity_source:=0 "
+                f"const_lookahead_distance:={float(self.parameters()['lookahead_distance_m']):.4f} "
+                f"minimum_lookahead_distance:={float(self.parameters()['lookahead_distance_m']):.4f}",
             )
+            self._publish_live_parameters(self.parameters())
             time.sleep(1.0)
             if not self._topic_has_message("/ctrl_cmd"):
                 raise ControllerError("控制链路启动失败：/ctrl_cmd 没有实时数据，已禁止显示‘循迹运行中’")
@@ -587,7 +758,11 @@ class BigCarController:
         if action == "stop_all":
             self._stop_all()
             return "全部节点已停止"
-        allowed = {"environment_check", "start_hardware", "start_autoware", "start_localization", "load_route", "start_tracking", "launch_rviz", "restart_workflow"}
+        allowed = {
+            "environment_check", "start_hardware", "start_autoware", "start_localization",
+            "load_route", "start_tracking", "launch_rviz", "restart_workflow",
+            "save_selection", "update_parameters",
+        }
         if action not in allowed:
             raise ControllerError("不允许的控制动作")
         with self._lock:
@@ -600,6 +775,10 @@ class BigCarController:
             try:
                 if action == "restart_workflow":
                     self._restart_workflow()
+                elif action == "save_selection":
+                    self._save_selection(data)
+                elif action == "update_parameters":
+                    self._update_parameters(data)
                 elif self.simulate:
                     time.sleep(0.45)
                     stage_for_action = {name: index + 1 for index, name in enumerate(("environment_check", "start_hardware", "start_autoware", "start_localization", "load_route", "start_tracking"))}
@@ -619,4 +798,9 @@ class BigCarController:
                     self._busy = None
 
         threading.Thread(target=worker, name=f"action-{action}", daemon=True).start()
-        return "已开始重启操作流程" if action == "restart_workflow" else f"已开始执行：{action}"
+        messages = {
+            "restart_workflow": "已开始重启操作流程",
+            "save_selection": "正在保存默认文件",
+            "update_parameters": "正在下发并保存运行参数",
+        }
+        return messages.get(action, f"已开始执行：{action}")

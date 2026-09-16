@@ -53,9 +53,19 @@ export interface ConsoleState {
   telemetry: Telemetry
   maps: ConsoleFile[]
   routes: ConsoleFile[]
+  selected_map: string
+  selected_route: string
+  parameters: RuntimeParameters
   logs: LogEntry[]
   timestamp: number
   last_error: string | null
+}
+
+export interface RuntimeParameters {
+  speed_limit_mps: number
+  lookahead_distance_m: number
+  obstacle_stop_distance_m: number
+  auto_loop: boolean
 }
 
 export interface RoutePoint {

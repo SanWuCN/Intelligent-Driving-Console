@@ -6,26 +6,36 @@ import { LogPanel } from './components/LogPanel'
 import { RouteMap } from './components/RouteMap'
 import { StatusPanel } from './components/StatusPanel'
 import { Workflow } from './components/Workflow'
-import type { RouteData, WorkflowStep } from './types'
+import type { RouteData, RuntimeParameters, WorkflowStep } from './types'
 import { useConsole } from './useConsole'
 
 const ACTIONS = ['environment_check', 'start_hardware', 'start_autoware', 'start_localization', 'load_route', 'start_tracking'] as const
 const ACTION_LABELS = ['运行环境检查', '启动底盘与雷达', '打开 Autoware 与终端', '打开 RViz 并开始标定', '加载路径与规划', '开始循迹']
+const MAP_KEY = 'bigcar-selected-map'
+const ROUTE_KEY = 'bigcar-selected-route'
 
 function App() {
   const { state, connectionError, refresh } = useConsole()
-  const [selectedMap, setSelectedMap] = useState('')
-  const [selectedRoute, setSelectedRoute] = useState('')
+  const [selectedMap, setSelectedMap] = useState(() => localStorage.getItem(MAP_KEY) || '')
+  const [selectedRoute, setSelectedRoute] = useState(() => localStorage.getItem(ROUTE_KEY) || '')
   const [route, setRoute] = useState<RouteData | null>(null)
+  const [parameters, setParameters] = useState<RuntimeParameters | null>(null)
+  const [parameterDirty, setParameterDirty] = useState(false)
   const [dialog, setDialog] = useState<'unlock' | 'safety' | 'restart' | null>(null)
   const [toast, setToast] = useState<{ text: string; error?: boolean } | null>(null)
   const [unlocked, setUnlocked] = useState(Boolean(getToken()))
 
   useEffect(() => {
     if (!state) return
-    if (!selectedMap && state.maps.length) setSelectedMap(state.maps.find((file) => file.name === 'map.pcd')?.name || state.maps[0].name)
-    if (!selectedRoute && state.routes.length) setSelectedRoute(state.routes.find((file) => file.name === '421.csv')?.name || state.routes[0].name)
-  }, [selectedMap, selectedRoute, state])
+    const mapExists = state.maps.some((file) => file.name === selectedMap)
+    const routeExists = state.routes.some((file) => file.name === selectedRoute)
+    if (!mapExists && state.maps.length) setSelectedMap(state.maps.find((file) => file.name === state.selected_map)?.name || state.maps.find((file) => file.name === 'map.pcd')?.name || state.maps[0].name)
+    if (!routeExists && state.routes.length) setSelectedRoute(state.routes.find((file) => file.name === state.selected_route)?.name || state.routes.find((file) => file.name === '421.csv')?.name || state.routes[0].name)
+    if (!parameters || !parameterDirty) setParameters(state.parameters)
+  }, [parameterDirty, parameters, selectedMap, selectedRoute, state])
+
+  useEffect(() => { if (selectedMap) localStorage.setItem(MAP_KEY, selectedMap) }, [selectedMap])
+  useEffect(() => { if (selectedRoute) localStorage.setItem(ROUTE_KEY, selectedRoute) }, [selectedRoute])
 
   useEffect(() => {
     if (!selectedRoute) { setRoute(null); return }
@@ -63,6 +73,8 @@ function App() {
     if (step.id === 6) { setDialog('safety'); return }
     void action(ACTIONS[step.id - 1])
   }, [action, unlocked])
+
+  const requireUnlock = useCallback(() => setDialog('unlock'), [])
 
   const nextStage = Math.min(state?.current_stage ?? 0, 5)
   const nextLabel = ACTION_LABELS[nextStage]
@@ -124,6 +136,7 @@ function App() {
           rvizRunning={state.rviz_running}
           localizationReady={state.live_topics.includes('/current_pose')}
           onLaunchRviz={() => unlocked ? void action('launch_rviz') : setDialog('unlock')}
+          onAuthRequired={requireUnlock}
         />
         <StatusPanel
           modules={state.modules}
@@ -134,8 +147,26 @@ function App() {
           busy={busy}
           nextLabel={isRunning ? '循迹运行中' : nextLabel}
           nextDisabled={fileBlocked || isRunning || !connectionOnline}
-          onMapChange={setSelectedMap}
-          onRouteChange={setSelectedRoute}
+          parameters={parameters || state.parameters}
+          parameterDirty={parameterDirty}
+          onMapChange={(value) => {
+            setSelectedMap(value)
+            if (unlocked) void action('save_selection', { map: value, route: selectedRoute })
+          }}
+          onRouteChange={(value) => {
+            setSelectedRoute(value)
+            if (unlocked) void action('save_selection', { map: selectedMap, route: value })
+          }}
+          onParameterChange={(name, value) => {
+            setParameters((current) => ({ ...(current || state.parameters), [name]: value }))
+            setParameterDirty(true)
+          }}
+          onApplyParameters={() => {
+            if (!unlocked) { setDialog('unlock'); return }
+            if (!parameters) return
+            setParameterDirty(false)
+            void action('update_parameters', { ...parameters })
+          }}
           onRefresh={() => void refresh()}
           onNext={() => {
             if (!unlocked) { setDialog('unlock'); return }

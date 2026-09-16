@@ -1,6 +1,7 @@
 import { Expand, Map as MapIcon, MonitorUp, RotateCcw, ZoomIn, ZoomOut } from 'lucide-react'
 import { memo, useEffect, useMemo, useRef, useState } from 'react'
 import type { RouteData } from '../types'
+import { ScreenMonitor } from './ScreenMonitor'
 
 interface Props {
   route: RouteData | null
@@ -8,6 +9,7 @@ interface Props {
   rvizRunning: boolean
   localizationReady: boolean
   onLaunchRviz: () => void
+  onAuthRequired: () => void
 }
 
 function RouteGraphic({ route, zoom }: { route: RouteData | null; zoom: number }) {
@@ -70,14 +72,14 @@ function RouteGraphic({ route, zoom }: { route: RouteData | null; zoom: number }
   )
 }
 
-export const RouteMap = memo(function RouteMap({ route, connected, rvizRunning, localizationReady, onLaunchRviz }: Props) {
-  const [view, setView] = useState<'map' | 'rviz'>('map')
+export const RouteMap = memo(function RouteMap({ route, connected, rvizRunning, localizationReady, onLaunchRviz, onAuthRequired }: Props) {
+  const [view, setView] = useState<'route' | 'screen'>('route')
   const [zoom, setZoom] = useState(1)
   const autoOpenedRviz = useRef(false)
 
   useEffect(() => {
     if (rvizRunning && !autoOpenedRviz.current) {
-      setView('rviz')
+      setView('screen')
       autoOpenedRviz.current = true
     }
     if (!rvizRunning) autoOpenedRviz.current = false
@@ -86,30 +88,23 @@ export const RouteMap = memo(function RouteMap({ route, connected, rvizRunning, 
   return (
     <section className="panel map-panel" aria-labelledby="map-title">
       <header className="panel-title map-titlebar">
-        <h2 id="map-title">三维地图视图（RViz）</h2>
+        <h2 id="map-title">路径预览与屏幕监看</h2>
         <div className="map-tools">
           <div className="segmented" aria-label="视图切换">
-            <button className={view === 'map' ? 'active' : ''} aria-pressed={view === 'map'} onClick={() => setView('map')}><MapIcon aria-hidden="true" />地图视图</button>
-            <button className={view === 'rviz' ? 'active' : ''} aria-pressed={view === 'rviz'} onClick={() => setView('rviz')}>RViz</button>
+            <button className={view === 'route' ? 'active' : ''} aria-pressed={view === 'route'} onClick={() => setView('route')}><MapIcon aria-hidden="true" />路径预览</button>
+            <button className={view === 'screen' ? 'active' : ''} aria-pressed={view === 'screen'} onClick={() => setView('screen')}><MonitorUp aria-hidden="true" />屏幕监看</button>
           </div>
-          <button className="icon-text" aria-label="放大地图" onClick={() => setZoom((value) => Math.min(value + .15, 1.8))}><ZoomIn aria-hidden="true" />放大</button>
-          <button className="icon-text" aria-label="缩小地图" onClick={() => setZoom((value) => Math.max(value - .15, .55))}><ZoomOut aria-hidden="true" />缩小</button>
-          <button className="icon-button" aria-label="重置地图缩放" onClick={() => setZoom(1)}><RotateCcw aria-hidden="true" /></button>
+          {view === 'route' ? <>
+            <button className="icon-text" aria-label="放大路径" onClick={() => setZoom((value) => Math.min(value + .15, 1.8))}><ZoomIn aria-hidden="true" />放大</button>
+            <button className="icon-text" aria-label="缩小路径" onClick={() => setZoom((value) => Math.max(value - .15, .55))}><ZoomOut aria-hidden="true" />缩小</button>
+            <button className="icon-button" aria-label="重置路径缩放" onClick={() => setZoom(1)}><RotateCcw aria-hidden="true" /></button>
+          </> : <button className="icon-text" onClick={onLaunchRviz}><MonitorUp aria-hidden="true" />{rvizRunning ? '重开 RViz' : '打开 RViz'}</button>}
           <button className="icon-button" aria-label="浏览器全屏" onClick={() => document.documentElement.requestFullscreen?.()}><Expand aria-hidden="true" /></button>
         </div>
       </header>
       <div className="map-stage">
-        {view === 'map' ? <RouteGraphic route={route} zoom={zoom} /> : (
-          <div className="rviz-stage">
-            <img src="/api/rviz.mjpeg" alt="车载桌面和 RViz 实时画面" />
-            <div className="rviz-help">
-              <MonitorUp aria-hidden="true" />
-              <span>{!connected ? '车端未连接' : localizationReady ? '定位已获得实时数据，可以继续加载路径' : rvizRunning ? '请在 RViz 选择 2D Pose Estimate，在地图上拖动设置车辆位置与朝向' : '打开 RViz 后，在地图上人工设置车辆初始位置与朝向'}</span>
-              <button onClick={onLaunchRviz}>{rvizRunning ? '重新打开' : '打开 RViz'}</button>
-            </div>
-          </div>
-        )}
-        <div className="map-legend">
+        {view === 'route' ? <RouteGraphic route={route} zoom={zoom} /> : <ScreenMonitor active={view === 'screen'} onAuthRequired={onAuthRequired} />}
+        {view === 'route' ? <><div className="map-legend">
           <span><i className="start" />起点</span>
           <span><i className="route" />录制路径</span>
           <span><i className="end" />终点</span>
@@ -118,7 +113,7 @@ export const RouteMap = memo(function RouteMap({ route, connected, rvizRunning, 
           <strong>路径长度 <span>{route ? `${route.length_m.toFixed(1)} m` : '—'}</span></strong>
           <strong>航点数量 <span>{route?.points.length ?? '—'}</span></strong>
           <strong>系统连接 <span className={connected ? 'online' : ''}>{connected ? '正常' : '离线'}</span></strong>
-        </div>
+        </div></> : <div className="rviz-context">{!connected ? '车端未连接' : localizationReady ? '定位已实时输出' : rvizRunning ? '请在 RViz 使用 2D Pose Estimate 完成人工标定' : '请先打开 RViz'}</div>}
       </div>
     </section>
   )

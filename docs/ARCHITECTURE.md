@@ -69,7 +69,14 @@ Pure Pursuit 必须使用 `publishes_for_steering_robot:=true`，否则只发布
 
 ## RViz 画面
 
-Python 服务使用 FFmpeg `x11grab` 捕获 `1920×1080` X11 桌面，缩放至 960 像素宽并以 4 FPS MJPEG 输出到 `/api/rviz.mjpeg`。视频流只用于观察，RViz 交互仍在车载桌面完成。
+前端使用 noVNC，后端通过只能使用一次、有效期 30 秒的会话票据，将 WebSocket 双向代理到本机 x11vnc `127.0.0.1:5900`。该链路可以直接交互车载 `1920×1080` X11 桌面和 RViz。`/api/rviz.mjpeg` 仍保留为只读诊断降级通道。
+
+## 实时调参与循环
+
+- Pure Pursuit：通过 `/config/waypoint_follower` 实时更新前视距离。
+- Waypoint Replanner：通过 `/config/waypoint_replanner` 实时更新速度上限。
+- Velocity Set：通过 `/config/velocity_set` 实时更新障碍停车距离。
+- 自动循环只对首尾距离不超过 2 m 的闭环 CSV 生效，生成文件位于 `runtime/loop_route.csv`。
 
 ## 进程、急停与重启
 

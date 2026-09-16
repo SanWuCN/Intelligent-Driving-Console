@@ -2,17 +2,22 @@
 from __future__ import annotations
 
 import argparse
+import base64
+import hashlib
 import hmac
 import json
 import mimetypes
 import os
+import socket
+import struct
 import subprocess
 import sys
+import threading
 import time
 from http import HTTPStatus
 from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
-from typing import Any, Dict
+from typing import Any, Dict, Tuple
 from urllib.parse import parse_qs, urlparse
 
 from controller import VERSION, BigCarController, ControllerError
@@ -86,6 +91,14 @@ class ConsoleHandler(SimpleHTTPRequestHandler):
             if parsed.path == "/api/rviz.mjpeg":
                 self._rviz_stream()
                 return
+            if parsed.path == "/api/screen":
+                ticket = parse_qs(parsed.query).get("ticket", [""])[0]
+                target = self.controller.consume_screen_ticket(ticket)
+                if target is None:
+                    self.send_error(HTTPStatus.FORBIDDEN, "Screen ticket expired")
+                    return
+                self._screen_proxy(*target)
+                return
             if parsed.path.startswith("/api/"):
                 self._json({"error": "接口不存在"}, HTTPStatus.NOT_FOUND)
                 return
@@ -136,8 +149,116 @@ class ConsoleHandler(SimpleHTTPRequestHandler):
             except subprocess.TimeoutExpired:
                 process.kill()
 
+    @staticmethod
+    def _recv_exact(stream: socket.socket, size: int) -> bytes:
+        chunks = []
+        remaining = size
+        while remaining:
+            chunk = stream.recv(remaining)
+            if not chunk:
+                raise ConnectionError("connection closed")
+            chunks.append(chunk)
+            remaining -= len(chunk)
+        return b"".join(chunks)
+
+    @staticmethod
+    def _send_ws_frame(stream: socket.socket, payload: bytes, opcode: int = 2) -> None:
+        header = bytearray([0x80 | opcode])
+        length = len(payload)
+        if length < 126:
+            header.append(length)
+        elif length <= 65535:
+            header.append(126)
+            header.extend(struct.pack("!H", length))
+        else:
+            header.append(127)
+            header.extend(struct.pack("!Q", length))
+        stream.sendall(bytes(header) + payload)
+
+    def _read_ws_frame(self) -> Tuple[int, bytes]:
+        first, second = self._recv_exact(self.connection, 2)
+        opcode = first & 0x0F
+        masked = bool(second & 0x80)
+        length = second & 0x7F
+        if length == 126:
+            length = struct.unpack("!H", self._recv_exact(self.connection, 2))[0]
+        elif length == 127:
+            length = struct.unpack("!Q", self._recv_exact(self.connection, 8))[0]
+        mask = self._recv_exact(self.connection, 4) if masked else b""
+        payload = self._recv_exact(self.connection, length) if length else b""
+        if masked:
+            payload = bytes(value ^ mask[index % 4] for index, value in enumerate(payload))
+        return opcode, payload
+
+    def _screen_proxy(self, host: str, port: int) -> None:
+        key = self.headers.get("Sec-WebSocket-Key", "")
+        if self.headers.get("Upgrade", "").lower() != "websocket" or not key:
+            self.send_error(HTTPStatus.BAD_REQUEST, "WebSocket upgrade required")
+            return
+        try:
+            vnc = socket.create_connection((host, port), timeout=5)
+            vnc.settimeout(None)
+        except OSError as exc:
+            self.controller.log("ERROR", "screen", f"VNC 连接失败：{exc}")
+            self.send_error(HTTPStatus.BAD_GATEWAY, "VNC service unavailable")
+            return
+        accept = base64.b64encode(hashlib.sha1((key + "258EAFA5-E914-47DA-95CA-C5AB0DC85B11").encode()).digest()).decode()
+        self.send_response(HTTPStatus.SWITCHING_PROTOCOLS)
+        self.send_header("Upgrade", "websocket")
+        self.send_header("Connection", "Upgrade")
+        self.send_header("Sec-WebSocket-Accept", accept)
+        self.end_headers()
+        self.close_connection = True
+        send_lock = threading.Lock()
+        stopped = threading.Event()
+
+        def vnc_to_browser() -> None:
+            try:
+                while not stopped.is_set():
+                    payload = vnc.recv(65536)
+                    if not payload:
+                        break
+                    with send_lock:
+                        self._send_ws_frame(self.connection, payload)
+            except (OSError, ConnectionError):
+                pass
+            finally:
+                stopped.set()
+                try:
+                    self.connection.shutdown(socket.SHUT_RDWR)
+                except OSError:
+                    pass
+
+        threading.Thread(target=vnc_to_browser, name="vnc-to-browser", daemon=True).start()
+        try:
+            while not stopped.is_set():
+                opcode, payload = self._read_ws_frame()
+                if opcode == 8:
+                    break
+                if opcode == 9:
+                    with send_lock:
+                        self._send_ws_frame(self.connection, payload, opcode=10)
+                elif opcode in (0, 1, 2):
+                    vnc.sendall(payload)
+        except (OSError, ConnectionError):
+            pass
+        finally:
+            stopped.set()
+            try:
+                vnc.shutdown(socket.SHUT_RDWR)
+            except OSError:
+                pass
+            vnc.close()
+
     def do_POST(self) -> None:
         parsed = urlparse(self.path)
+        if parsed.path == "/api/screen-ticket":
+            if not self._authorized():
+                self._json({"error": "控制令牌无效，无法连接车载屏幕"}, HTTPStatus.UNAUTHORIZED)
+                return
+            self._read_json()
+            self._json(self.controller.issue_screen_ticket())
+            return
         if parsed.path != "/api/action":
             self._json({"error": "接口不存在"}, HTTPStatus.NOT_FOUND)
             return

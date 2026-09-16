@@ -10,27 +10,45 @@ if [[ ! -f "$APP_DIR/dist/index.html" ]]; then
 fi
 
 install -d -m 0755 "$APP_DIR/runtime/logs"
-if [[ ! -f "$APP_DIR/runtime/config.json" ]]; then
-  CONTROL_TOKEN="$(python3 -c 'import secrets; print(secrets.token_urlsafe(24))')"
-  python3 - "$APP_DIR/runtime/config.json" "$CONTROL_TOKEN" <<'PY'
+python3 - "$APP_DIR/runtime/config.json" <<'PY'
 import json, sys
-path, token = sys.argv[1:]
-config = {
+path = sys.argv[1]
+try:
+    with open(path, encoding="utf-8") as handle:
+        config = json.load(handle)
+except (OSError, ValueError):
+    config = {}
+defaults = {
     "container": "autoware_ai_orin",
     "data_dir": "/home/nvidia/Desktop",
-    "control_token": token,
+    "control_token": "801801801",
     "listen": "0.0.0.0",
     "port": 8765,
     "display": ":0",
     "xauthority": "/run/user/1000/gdm/Xauthority",
-    "screen_size": "1920x1080"
+    "screen_size": "1920x1080",
+    "vnc_host": "127.0.0.1",
+    "vnc_port": 5900,
+    "vnc_password": "replace-with-vnc-password",
+    "selected_map": "",
+    "selected_route": "",
+    "parameters": {
+        "speed_limit_mps": 0.2,
+        "lookahead_distance_m": 2.0,
+        "obstacle_stop_distance_m": 0.05,
+        "auto_loop": True
+    }
 }
+for key, value in defaults.items():
+    if key == "control_token":
+        config[key] = value
+    else:
+        config.setdefault(key, value)
 with open(path, "w", encoding="utf-8") as handle:
     json.dump(config, handle, ensure_ascii=False, indent=2)
     handle.write("\n")
 PY
-  chmod 0600 "$APP_DIR/runtime/config.json"
-fi
+chmod 0600 "$APP_DIR/runtime/config.json"
 
 install -m 0644 "$APP_DIR/deploy/bigcar-console.service" "$SERVICE_FILE"
 systemctl daemon-reload

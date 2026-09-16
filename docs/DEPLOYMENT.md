@@ -8,7 +8,7 @@
 - `/opt/ros/melodic/setup.bash` 和 `/root/autoware_1.14.0/install/setup.bash` 存在。
 - Hesai 雷达、YHS 底盘驱动以及 CAN0 已按实车配置。
 - Jetson 图形桌面使用 X11，默认 `DISPLAY=:0`。
-- 宿主机已安装 Python 3 和 FFmpeg。
+- 宿主机已安装 Python 3、FFmpeg 和 x11vnc，`x11vnc.service` 监听本机 `5900`。
 
 ## 1. 构建与测试
 
@@ -39,7 +39,9 @@ ssh nvidia@VEHICLE_IP
 sudo bash /home/nvidia/Desktop/bigcar-console/deploy/install.sh
 ```
 
-首次安装会在 `/home/nvidia/Desktop/bigcar-console/runtime/config.json` 中生成控制令牌。该文件权限为 `0600`，不应提交到 Git 或发送到公开聊天。
+安装脚本会把控制令牌更新为项目约定的 `801801801`，并补齐 VNC、上次文件和运行参数配置。`runtime/config.json` 权限为 `0600`，不应提交到 Git。对外网络部署时必须换成强令牌。
+
+将 `runtime/config.json` 中的 `vnc_password` 设为车端 x11vnc 密码。安装脚本不会把真实 VNC 密码写入仓库。
 
 ## 4. 检查服务
 

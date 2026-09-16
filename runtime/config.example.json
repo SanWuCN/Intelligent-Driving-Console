@@ -1,10 +1,21 @@
 {
   "container": "autoware_ai_orin",
   "data_dir": "/home/nvidia/Desktop",
-  "control_token": "replace-with-a-random-secret",
+  "control_token": "801801801",
   "listen": "0.0.0.0",
   "port": 8765,
   "display": ":0",
   "xauthority": "/run/user/1000/gdm/Xauthority",
-  "screen_size": "1920x1080"
+  "screen_size": "1920x1080",
+  "vnc_host": "127.0.0.1",
+  "vnc_port": 5900,
+  "vnc_password": "replace-with-vnc-password",
+  "selected_map": "map.pcd",
+  "selected_route": "421.csv",
+  "parameters": {
+    "speed_limit_mps": 0.2,
+    "lookahead_distance_m": 2.0,
+    "obstacle_stop_distance_m": 0.05,
+    "auto_loop": true
+  }
 }

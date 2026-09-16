@@ -99,6 +99,12 @@ class ControllerTests(unittest.TestCase):
     def test_route_uses_five_centimeter_obstacle_stop_distance(self):
         (self.data / "route.csv").write_text("0,0,0,0,1\n1,0,0,0,1\n", encoding="utf-8")
         self.controller.simulate = False
+        self.controller.config["parameters"] = {
+            "speed_limit_mps": 0.2,
+            "lookahead_distance_m": 2.0,
+            "obstacle_stop_distance_m": 0.05,
+            "auto_loop": False,
+        }
         started = []
         required_nodes = {"/base_link_to_localizer", "/robot_state_publisher"}
         with patch.object(self.controller, "_live_topics", return_value={"/current_pose"}), patch.object(
@@ -113,6 +119,44 @@ class ControllerTests(unittest.TestCase):
         waypoint_loader = next(command for name, command in started if name == "waypoint_loader")
         self.assertIn("velocity_max:=0.72", waypoint_loader)
         self.assertIn("replanning_mode:=true", waypoint_loader)
+
+    def test_loop_route_is_repeated_and_speed_is_rewritten(self):
+        source = self.data / "loop.csv"
+        source.write_text(
+            "x,y,z,yaw,velocity\n0,0,0,0,1\n1,0,0,0,1\n0.2,0.1,0,0,0\n",
+            encoding="utf-8",
+        )
+        target = self.controller._prepare_loop_route(source, 0.2, laps=3)
+        rows = target.read_text(encoding="utf-8").splitlines()
+        self.assertEqual(len(rows), 10)
+        self.assertTrue(all(row.endswith(",0.7200") for row in rows[1:]))
+
+    def test_loop_route_rejects_non_closed_path(self):
+        source = self.data / "open.csv"
+        source.write_text("0,0,0,0,1\n1,0,0,0,1\n4,0,0,0,1\n", encoding="utf-8")
+        with self.assertRaisesRegex(ControllerError, "路径未闭环"):
+            self.controller._prepare_loop_route(source, 0.2, laps=2)
+
+    def test_parameters_are_validated_and_persisted(self):
+        self.controller._update_parameters({
+            "speed_limit_mps": 0.25,
+            "lookahead_distance_m": 1.5,
+            "obstacle_stop_distance_m": 0.1,
+            "auto_loop": True,
+        })
+        self.assertEqual(self.controller.parameters()["speed_limit_mps"], 0.25)
+        with self.assertRaises(ControllerError):
+            self.controller._update_parameters({
+                "speed_limit_mps": 2,
+                "lookahead_distance_m": 1.5,
+                "obstacle_stop_distance_m": 0.1,
+                "auto_loop": True,
+            })
+
+    def test_screen_ticket_is_single_use(self):
+        issued = self.controller.issue_screen_ticket()
+        self.assertIsNotNone(self.controller.consume_screen_ticket(issued["ticket"]))
+        self.assertIsNone(self.controller.consume_screen_ticket(issued["ticket"]))
 
     def test_emergency_zero_command_uses_live_topic_type(self):
         self.controller.simulate = False

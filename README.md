@@ -10,9 +10,11 @@
 - 六步引导：环境检查、底盘与雷达、Autoware、地图与标定、路径配置、循迹运行。
 - 根据真实 ROS 节点、话题和话题消息推进流程，不把“按过按钮”当成“启动成功”。
 - 在车载桌面打开 Runtime Manager、控制终端和 RViz。
-- 网页内嵌 Jetson 桌面/RViz MJPEG 实时画面。
+- 网页内嵌可交互的 Jetson 屏幕监看，可直接操作 Runtime Manager 和 RViz。
 - 人工 `2D Pose Estimate` 完成后才启动 NDT。
-- 支持选择 PCD 地图和 CSV 轨迹，并绘制路径预览。
+- 只列出配置数据目录中的 PCD/CSV，并跨浏览器重启记住上次选择。
+- 支持闭环轨迹自动连续跑圈，非闭环路径会被安全拒绝。
+- 运行中可调整限速、Pure Pursuit 前视距离、障碍停车距离和循环开关。
 - 监控 Docker、CAN、Hesai 激光雷达、TF、NDT、路径和控制话题。
 - 控制令牌、启动前安全确认、常驻软件急停和结构化日志。
 - 安全重启全部流程：先发布零速指令，再停止控制台管理的 ROS 节点。
@@ -22,8 +24,8 @@
 ## 系统架构
 
 ```text
-浏览器（React + TypeScript）
-          │ HTTP / JSON / MJPEG
+浏览器（React + TypeScript + noVNC）
+          │ HTTP / JSON / WebSocket
           ▼
 Jetson 宿主机 Python 服务 :8765
           │ 白名单动作 + docker exec
@@ -53,6 +55,8 @@ YHS 底盘节点 → CAN0 → 车辆
 | 车载屏分辨率 | `1920×1080` |
 
 底盘程序会在 50 mm 净阈值上叠加传感器安装偏置，实际触发距离会大于 50 mm。详见 [YHS 底盘修改说明](vehicle/yhs_can_control_qt/README.md)。
+
+更多定位、规划、感知和车辆控制调参项见 [Autoware.AI 可调参数与功能边界](docs/AUTOWARE_TUNING.md)。
 
 ## 环境要求
 
@@ -108,7 +112,7 @@ npm run build
 sudo bash /home/nvidia/Desktop/bigcar-console/deploy/install.sh
 ```
 
-安装脚本会生成独立控制令牌、安装 `bigcar-console.service`、创建车载桌面快捷方式，并在 `0.0.0.0:8765` 提供网页服务。
+安装脚本会将控制令牌设为 `801801801`、安装 `bigcar-console.service`、创建车载桌面快捷方式，并在 `0.0.0.0:8765` 提供网页服务。实车实验结束后建议换成随机强令牌。
 
 ## 目录结构
 
@@ -130,20 +134,25 @@ vehicle/                 YHS 底盘防撞修改文件和说明
 | GET | `/api/health` | 服务健康与版本 |
 | GET | `/api/state` | 聚合系统、ROS、CAN 和流程状态 |
 | GET | `/api/route?file=...` | 读取白名单 CSV 路径 |
-| GET | `/api/rviz.mjpeg` | 车载桌面/RViz 实时画面 |
+| POST | `/api/screen-ticket` | 签发一次性车载屏幕会话 |
+| GET | `/api/screen?ticket=...` | WebSocket 到 x11vnc 的可交互屏幕代理 |
+| GET | `/api/rviz.mjpeg` | 只读桌面画面（降级诊断用） |
 | POST | `/api/action` | 执行白名单控制动作 |
 
 除急停外，写操作必须在 `X-Control-Token` 请求头中提供控制令牌。
 
 ## 当前限制
 
-- CSV 轨迹当前为单次执行；到达终点后会停车，未实现自动循环。
+- 页面中的“路径预览”是真实 CSV 航迹的二维绘制，不是 PCD 点云地图渲染；PCD 地图和实时雷达由屏幕监看中的 RViz 显示。
+- 自动循环通过生成 200 圈连续航点实现；这对实训演示等价于长时间自动循环，但不是无限航程。
+- 当前未启动“行人分类”链路；`velocity_set` 只把点云视为障碍物并减速/停车。
+- 当前 `/ctrl_cmd` 只含速度、加速度和转角，未实现转向灯 CAN 命令。
 - 仓库不包含完整 Autoware 源码，`vehicle/` 只保留 YHS 底盘的受控修改文件。
 - 雷达外参、车辆轴距、转向极性、CSV 速度单位和 CAN 报文必须按实车复核。
 - 当前参数是封闭实训室低速测试配置，不适用于公开道路。
 
 ## 安全与许可
 
-部署前请阅读 [SECURITY.md](SECURITY.md)。仓库不保存控制令牌、密码、PID 或运行日志。
+部署前请阅读 [SECURITY.md](SECURITY.md)。仓库不保存车端 VNC/SSH 密码、PID 或运行日志；`801801801` 是实训环境的约定默认控制令牌，不应用于不可信网络。
 
 本仓库当前未附带开源许可证。除非权利人另行授权，否则保留所有权利。学校名称、校徽和其他品牌素材不因代码公开而授予使用权。
