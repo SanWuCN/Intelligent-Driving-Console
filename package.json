@@ -9,6 +9,7 @@
   },
   "type": "module",
   "scripts": {
+    "fleet": "python3 backend/fleet.py",
     "dev": "vite --host 0.0.0.0",
     "build": "tsc -b && vite build",
     "preview": "vite preview --host 0.0.0.0",

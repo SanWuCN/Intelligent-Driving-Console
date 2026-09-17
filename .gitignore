@@ -1,6 +1,9 @@
 node_modules/
 dist/
 runtime/config.json
+runtime/fleet*.json
+runtime/fleet*.tmp
+runtime/screenshots/
 runtime/*.pid
 runtime/logs/*.log
 *.pyc

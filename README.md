@@ -79,6 +79,8 @@ YHS 底盘节点 → CAN0 → 车辆
 
 ## 本机开发
 
+多车管理平台已提供：本机运行 `npm run build` 后执行 `npm run fleet`，打开 `http://127.0.0.1:8870/fleet`。支持按 IP 添加车辆、批量六步流程、人工定位队列、任务记录与系统设置。详细操作与部署见 [本机管理平台](docs/FLEET.md)。
+
 ```bash
 git clone https://github.com/SanWuCN/Intelligent-Driving-Console.git
 cd Intelligent-Driving-Console

@@ -5,6 +5,7 @@ import { postJSON } from '../api'
 interface Props {
   active: boolean
   onAuthRequired: () => void
+  basePath?: string
 }
 
 interface ScreenTicket {
@@ -22,7 +23,7 @@ interface RfbClient {
   addEventListener: (name: string, handler: (event: Event) => void) => void
 }
 
-export function ScreenMonitor({ active, onAuthRequired }: Props) {
+export function ScreenMonitor({ active, onAuthRequired, basePath = '' }: Props) {
   const target = useRef<HTMLDivElement | null>(null)
   const [attempt, setAttempt] = useState(0)
   const [status, setStatus] = useState<'idle' | 'connecting' | 'connected' | 'error'>('idle')
@@ -40,11 +41,11 @@ export function ScreenMonitor({ active, onAuthRequired }: Props) {
       try {
         const [{ default: RFB }, credentials] = await Promise.all([
           import('@novnc/novnc'),
-          postJSON<ScreenTicket>('/api/screen-ticket', {}),
+          postJSON<ScreenTicket>(`${basePath}/api/screen-ticket`, {}),
         ])
         if (cancelled || !target.current) return
         const scheme = window.location.protocol === 'https:' ? 'wss:' : 'ws:'
-        const url = `${scheme}//${window.location.host}/api/screen?ticket=${encodeURIComponent(credentials.ticket)}`
+        const url = `${scheme}//${window.location.host}${basePath}/api/screen?ticket=${encodeURIComponent(credentials.ticket)}`
         client = new RFB(target.current, url, { credentials: { password: credentials.password } }) as unknown as RfbClient
         client.scaleViewport = true
         client.resizeSession = false
@@ -83,7 +84,7 @@ export function ScreenMonitor({ active, onAuthRequired }: Props) {
       client?.disconnect()
       client = null
     }
-  }, [active, attempt, onAuthRequired])
+  }, [active, attempt, onAuthRequired, basePath])
 
   return (
     <div className="screen-monitor">
