@@ -130,10 +130,37 @@ class LiveBridge:
         script = str(self.controller.config.get("bridge_script", "/from_host/bigcar-console/backend/ros_bridge.py"))
         # 容器默认的 `python` 是 Python 3 且没 source ROS，必须走 bash -lc + python2，
         # 否则一启动就是 "No module named rospy"。
-        inner = f"exec python2 {shlex.quote(script)}"
+        # 先把容器内 PID 记到 /tmp：杀 docker exec 不会杀容器里的进程，
+        # 不清理就会攒下一堆 /bigcar_live_bridge 僵尸节点。
+        inner = f"echo $$ > /tmp/bigcar_live_bridge.pid; exec python2 {shlex.quote(script)}"
         if os.environ.get("BIGCAR_BRIDGE_MOCK"):
-            inner = f"exec python2 {shlex.quote(script)} --mock"
+            inner = f"echo $$ > /tmp/bigcar_live_bridge.pid; exec python2 {shlex.quote(script)} --mock"
         return ["docker", "exec", "-i", self.controller.container, "bash", "-lc", f"{ROS_SETUP}; {inner}"]
+
+    def _sweep_stale_bridges(self) -> None:
+        if self.controller.simulate:
+            return
+        time.sleep(2.0)   # 让服务先把端口和日志准备好
+        try:
+            self.controller._docker([
+                "exec", self.controller.container, "bash", "-lc",
+                # [r] 让 pkill 不匹配到执行这条命令的 bash 自己，否则会把自己杀掉。
+                "pkill -f '[r]os_bridge.py' 2>/dev/null; rm -f /tmp/bigcar_live_bridge.pid; true",
+            ], timeout=6)
+            self.controller.log("INFO", "live", "已清理容器内可能残留的实时桥接进程")
+        except Exception:
+            pass
+
+    def _kill_container_bridge(self) -> None:
+        """杀掉容器里残留的桥接进程（docker exec 被杀不会带走它）。"""
+        if self.controller.simulate:
+            return
+        self.controller._docker([
+            "exec", self.controller.container, "bash", "-lc",
+            "pid=$(cat /tmp/bigcar_live_bridge.pid 2>/dev/null || true); "
+            "if [ -n \"$pid\" ]; then kill -TERM \"$pid\" 2>/dev/null || true; sleep 0.5; "
+            "kill -KILL \"$pid\" 2>/dev/null || true; fi; rm -f /tmp/bigcar_live_bridge.pid",
+        ], timeout=6)
 
     def ensure(self) -> bool:
         """Start the bridge process if it is not running. Never raises."""
@@ -176,6 +203,9 @@ class LiveBridge:
             return
         code = process.wait()
         self.controller.log("WARN", "live", f"实时数据桥接已退出（code={code}）")
+        if code != 0:
+            # 非正常退出时容器里可能还留着 python2 进程。
+            threading.Thread(target=self._kill_container_bridge, daemon=True).start()
         with self.lock:
             if self.process is process:
                 self.process = None
@@ -349,11 +379,13 @@ class LiveBridge:
     def status(self) -> Dict[str, Any]:
         with self.lock:
             clients = len(self.clients)
-            running = self.process is not None and self.process.poll() is None
+            process = self.process
+            running = process is not None and process.poll() is None
         return {
             "running": running, "ready": self.ready, "clients": clients,
             "frames": self.frames, "last_frame_at": self.last_frame_at,
             "error": self.last_error, "map": self._last_map,
+            "pid": getattr(process, "pid", None),
         }
 
     def close(self) -> None:
@@ -366,6 +398,11 @@ class LiveBridge:
                 process.wait(timeout=3)
             except (OSError, subprocess.TimeoutExpired):
                 process.kill()
+        self._kill_container_bridge()
+
+    def shutdown(self) -> None:
+        """完全停掉桥接并清掉容器里的残留进程。"""
+        self.close()
 
 
 class BigCarController:
@@ -834,17 +871,25 @@ class BigCarController:
         except (ControllerError, ValueError):
             ceiling = 0.0
         # 只有 waypoint_replanner 在运行时 `/config/waypoint_replanner` 才有订阅者；
-        # 此时改动立刻反映到 `/final_waypoints`，也就是「马上生效」。
-        live = bool(self._container_running()) and stage >= 5
+        # 此时改动会立刻反映到 `/final_waypoints`，也就是「马上生效」。
+        capable = bool(self._container_running()) and stage >= 5
+        with self._lock:
+            queued = self._speed_pending is not None
+        if capable and queued:
+            detail = "正在下发到车端…"
+        elif capable:
+            detail = "已下发到车端，改变立即生效"
+        else:
+            detail = "已保存；车端规划节点启动后（第 5 步）自动按此速度运行"
         return {
             "min_mps": SPEED_MIN_MPS,
             "max_mps": SPEED_MAX_MPS,
             "value_mps": round(stored, 3),
             "route_ceiling_mps": round(ceiling, 3),
             "route_limited": bool(ceiling) and stored > ceiling + 0.02,
-            "live": live,
-            "detail": "已下发到车端，改变立即生效" if live
-            else "已保存；车端规划节点启动后（第 5 步）自动按此速度运行",
+            "live": bool(capable and not queued),
+            "pending": queued,
+            "detail": detail,
         }
 
     def _set_all_waypoint_velocities(self, source: Path, speed_mps: float) -> bool:

@@ -8,6 +8,7 @@ import hmac
 import json
 import mimetypes
 import os
+import signal
 import socket
 import struct
 import subprocess
@@ -437,6 +438,15 @@ def main() -> int:
     args = parser.parse_args()
     server = build_server(args.host, args.port, simulate=args.simulate)
     print(f"bigcar-console {VERSION} listening on http://{args.host}:{args.port}", flush=True)
+    # systemd restart 发的是 SIGTERM，默认动作会直接退出、跳过 finally，
+    # 容器里的 ros_bridge 就成了没人管的孤儿进程。
+    def _terminate(_signum: int, _frame: Any) -> None:
+        raise KeyboardInterrupt
+    for _signal in (signal.SIGTERM, signal.SIGINT):
+        try:
+            signal.signal(_signal, _terminate)
+        except (ValueError, OSError):
+            pass
     try:
         server.serve_forever(poll_interval=0.5)
     except KeyboardInterrupt:

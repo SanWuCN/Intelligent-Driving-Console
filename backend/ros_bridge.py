@@ -352,6 +352,7 @@ class Scene(object):
         self.pending_map = None
         self.pending_map_token = None
         self.map_sent = None
+        self.shutting_down = False
         self.pending_waypoints = None
         self.pose_samples = []
 
@@ -481,8 +482,11 @@ def run_mock():
     radius = 9.0
     cloud_budget = 18000
     pump = Pump()
-    while True:
+    while not SCENE.shutting_down:
         now = time.time()
+        if watchdog_expired(now):
+            log("no console commands for %.0fs; shutting down" % WATCHDOG_SECONDS)
+            return
         elapsed = now - started
         requested_map, map_token = SCENE.requested_map()
         if requested_map:
@@ -635,7 +639,8 @@ def run_ros():
             del SCENE.pose_samples[:-60]
 
     def on_waypoints(message):
-        if len(message.waypoints) < 2:
+        # 没人看的时候不做降采样：/final_waypoints 是 15 Hz，白算会白烧 CPU。
+        if not SCENE.streaming or len(message.waypoints) < 2:
             return
         step = max(1, len(message.waypoints) // 400)
         points = []
@@ -653,6 +658,9 @@ def run_ros():
             }
 
     def on_cloud(message):
+        # 同上：没有订阅者时直接丢弃，10 Hz 的点云解析是这里最贵的一步。
+        if not SCENE.streaming:
+            return
         started = time.time()
         rotation, translation, target = translator(message.header.frame_id or "velodyne")
         if numpy is not None:
@@ -690,8 +698,11 @@ def run_ros():
 
     pump = Pump()
 
-    while not rospy.is_shutdown():
+    while not rospy.is_shutdown() and not SCENE.shutting_down:
         now = time.time()
+        if watchdog_expired(now):
+            log("no console commands for %.0fs; shutting down" % WATCHDOG_SECONDS)
+            return
         data = SCENE.snapshot()
         requested_map = data["pending_map"]
         if requested_map:
@@ -717,7 +728,17 @@ LIDAR_FALLBACK = (1.2, 0.0, 2.0)
 
 
 # -------------------------------------------------------------------- commands
+LAST_COMMAND = [time.time()]
+WATCHDOG_SECONDS = 90.0
+
+
+def watchdog_expired(now=None):
+    """宿主没了（管道断了 / 被 kill -9）时，桥接要自己退出，别当孤儿进程。"""
+    return (now or time.time()) - LAST_COMMAND[0] > WATCHDOG_SECONDS
+
+
 def handle_command(command):
+    LAST_COMMAND[0] = time.time()
     name = command.get("cmd")
     with SCENE.lock:
         if name == "start":
@@ -729,6 +750,9 @@ def handle_command(command):
                 pass
         elif name == "stop":
             SCENE.streaming = False
+        elif name == "shutdown":
+            SCENE.streaming = False
+            SCENE.shutting_down = True
         elif name == "map":
             name_value = str(command.get("map", ""))
             SCENE.pending_map = name_value or None
@@ -742,17 +766,29 @@ def handle_command(command):
 
 
 def command_loop():
-    """Read newline-delimited JSON commands from stdin without busy-waiting."""
+    """Read newline-delimited JSON commands from stdin without busy-waiting.
+
+    stdin 关闭（宿主进程退出 / docker exec 管道断开）即视为停机信号：
+    否则容器里会留下一堆没人管的 ros_bridge 进程和 /bigcar_live_bridge 节点。
+    """
     buffer = b""
     while True:
         try:
             ready, _, _ = select.select([sys.stdin], [], [], 0.5)
         except (select.error, ValueError):
+            with SCENE.lock:
+                SCENE.shutting_down = True
             return
         if not ready:
             continue
-        chunk = os.read(sys.stdin.fileno(), 65536)
+        try:
+            chunk = os.read(sys.stdin.fileno(), 65536)
+        except OSError:
+            chunk = b""
         if not chunk:
+            log("stdin closed; shutting down")
+            with SCENE.lock:
+                SCENE.shutting_down = True
             return
         buffer += chunk
         while b"\n" in buffer:

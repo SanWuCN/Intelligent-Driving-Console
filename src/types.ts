@@ -71,6 +71,8 @@ export interface SpeedState {
   route_ceiling_mps: number
   route_limited: boolean
   live: boolean
+  /** 后台线程还在下发这一刻的值。 */
+  pending?: boolean
   detail: string
 }
 
