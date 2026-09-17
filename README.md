@@ -48,13 +48,20 @@ YHS 底盘节点 → CAN0 → 车辆
 | --- | ---: |
 | 循迹速度上限 | `0.2 m/s` (`0.72 km/h`) |
 | Pure Pursuit 最小前视距离 | `2 m` |
-| Autoware `velocity_set` 障碍停车距离 | `0.05 m` |
+| 激光雷达避障（`velocity_set` 点云停车） | **已关闭**（`detection_range 0.0` / `points_threshold 2000000000`） |
+| Autoware `velocity_set` 障碍停车距离 | `0.05 m`（仅在避障开启时生效） |
+| A* 绕障（`astar_avoid`） | 已关闭（`enable_avoidance=false`） |
 | 底盘防撞净阈值 | `50 mm` |
 | 激光雷达 | Hesai PandarXT-16 |
 | 容器 | `autoware_ai_orin` |
 | 车载屏分辨率 | `1920×1080` |
 
 底盘程序会在 50 mm 净阈值上叠加传感器安装偏置，实际触发距离会大于 50 mm。详见 [YHS 底盘修改说明](vehicle/yhs_can_control_qt/README.md)。
+
+> [!WARNING]
+> 激光雷达避障当前被刻意关闭，用于排除点云误判导致的停车。关闭后车辆不会因为前方点云障碍自动停车，只有底盘自身的 50 mm 防撞网和物理急停仍然有效。在开放场地或有人走动的环境恢复行驶前，请先用 `bigcar/diagnostics/enable_lidar_avoidance.sh` 打开避障。
+
+避障开关的位置、持久化位置和回滚方式（`bigcar/diagnostics/` 下的 disable/enable 脚本）见 [Autoware.AI 可调参数与功能边界](docs/AUTOWARE_TUNING.md)。
 
 更多定位、规划、感知和车辆控制调参项见 [Autoware.AI 可调参数与功能边界](docs/AUTOWARE_TUNING.md)。
 
@@ -148,6 +155,7 @@ vehicle/                 YHS 底盘防撞修改文件和说明
 - 页面中的“路径预览”是真实 CSV 航迹的二维绘制，不是 PCD 点云地图渲染；PCD 地图和实时雷达由屏幕监看中的 RViz 显示。
 - 自动循环通过生成 200 圈连续航点实现；这对实训演示等价于长时间自动循环，但不是无限航程。
 - 当前未启动“行人分类”链路；`velocity_set` 只把点云视为障碍物并减速/停车。
+- 激光雷达避障当前已关闭（`LIDAR_OBSTACLE_AVOIDANCE_ENABLED = False`），`velocity_set` 只做航点速度整形，不再因点云停车。`astar_avoid` 节点的 `enable_avoidance` 同样为 `false`，因此当前**没有任何自动避障**，只有底盘 50 mm 防撞网。
 - 当前 `/ctrl_cmd` 只含速度、加速度和转角，未实现转向灯 CAN 命令。
 - 仓库不包含完整 Autoware 源码，`vehicle/` 只保留 YHS 底盘的受控修改文件。
 - 雷达外参、车辆轴距、转向极性、CSV 速度单位和 CAN 报文必须按实车复核。

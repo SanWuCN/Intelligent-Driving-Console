@@ -29,6 +29,14 @@ DEFAULT_PARAMETERS = {
     "auto_loop": True,
 }
 
+# 激光雷达避障（velocity_set 点云停车/减速）总开关。
+# False：检测半径归零 + 点数阈值取 int32 上限，点云永远达不到判定条件，
+#        velocity_set 只做航点速度整形，不再因为点云把目标速度压到 0。
+# True ：恢复 Autoware.AI 原厂阈值（检测半径 1.3 m、点数阈值 10）。
+LIDAR_OBSTACLE_AVOIDANCE_ENABLED = False
+LIDAR_DETECTION_RANGE_M = 1.3 if LIDAR_OBSTACLE_AVOIDANCE_ENABLED else 0.0
+LIDAR_POINTS_THRESHOLD = 10 if LIDAR_OBSTACLE_AVOIDANCE_ENABLED else 2000000000
+
 
 class ControllerError(RuntimeError):
     pass
@@ -325,7 +333,8 @@ class BigCarController:
         velocity_set = (
             "{header: {stamp: now}, "
             f"stop_distance_obstacle: {stop_distance_m:.4f}, stop_distance_stopline: 5.0, "
-            "detection_range: 1.3, threshold_points: 10, detection_height_top: 0.2, "
+            f"detection_range: {LIDAR_DETECTION_RANGE_M:.1f}, threshold_points: {LIDAR_POINTS_THRESHOLD}, "
+            "detection_height_top: 0.2, "
             "detection_height_bottom: -1.7, deceleration_obstacle: 0.8, "
             "deceleration_stopline: 0.6, velocity_change_limit: 9.972, "
             "deceleration_range: 0.0, temporal_waypoints_size: 100.0}"
@@ -600,7 +609,8 @@ class BigCarController:
         the container filesystem and ROS environment while fixing Qt's X11 path.
         """
         pid_file = "/from_host/bigcar-console/runtime/rviz.pid"
-        log_file = "/from_host/bigcar-console/runtime/logs/rviz.log"
+        # Redirection is evaluated by the host shell before nsenter runs.
+        log_file = str(self.logs_dir / "rviz.log")
         check = self._ros(f"p=$(cat {shlex.quote(pid_file)} 2>/dev/null || true); test -n \"$p\" && kill -0 \"$p\" 2>/dev/null", timeout=4)
         if check.returncode == 0:
             self.log("INFO", "rviz", "进程已在运行，跳过重复启动")
@@ -609,15 +619,15 @@ class BigCarController:
         xauth = str(self.config.get("xauthority", "/run/user/1000/gdm/Xauthority"))
         command = (
             "container_pid=$(docker inspect -f '{{.State.Pid}}' " + shlex.quote(self.container) + "); "
-            "test -n \"$container_pid\" -a \"$container_pid\" != 0; "
-            "nsenter --target \"$container_pid\" --mount --uts --net --pid bash -lc "
+            "test -n \"$container_pid\" -a \"$container_pid\" != 0 || exit 1; "
+            "nohup nsenter --target \"$container_pid\" --mount --uts --net --pid bash -lc "
             + shlex.quote(
                 f"source /opt/ros/melodic/setup.bash; source /root/autoware_1.14.0/install/setup.bash; "
                 f"export DISPLAY={shlex.quote(display)} XAUTHORITY={shlex.quote(xauth)}; "
                 f"echo $$ > {shlex.quote(pid_file)}; "
                 "exec rosrun rviz rviz -d $(rospack find autoware_quickstart_examples)/launch/rosbag_demo/default.rviz"
             )
-            + f" >> {shlex.quote(log_file)} 2>&1"
+            + f" >> {shlex.quote(log_file)} 2>&1 </dev/null &"
         )
         result = self._run(["bash", "-lc", command], timeout=10)
         if result.returncode != 0:
@@ -694,7 +704,8 @@ class BigCarController:
                 "velocity_set",
                 "roslaunch waypoint_planner velocity_set.launch "
                 "use_crosswalk_detection:=false enable_multiple_crosswalk_detection:=false "
-                f"points_topic:=points_no_ground stop_distance_obstacle:={float(parameters['obstacle_stop_distance_m']):.4f}",
+                f"points_topic:=points_no_ground stop_distance_obstacle:={float(parameters['obstacle_stop_distance_m']):.4f} "
+                f"detection_range:={LIDAR_DETECTION_RANGE_M:.1f} points_threshold:={LIDAR_POINTS_THRESHOLD}",
             )
             return
         if action == "start_tracking":

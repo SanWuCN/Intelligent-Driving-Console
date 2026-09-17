@@ -1,5 +1,14 @@
 # Changelog
 
+## 未发版（车端已应用，`VERSION` 仍为 1.3.0）
+
+- 关闭激光雷达避障：`velocity_set` 的 `detection_range` 由 `1.3 m` 改为 `0.0`、
+  `threshold_points` / `points_threshold` 由 `10` 改为 `2000000000`，点云不再把目标速度压到 0。
+- 新增 `LIDAR_OBSTACLE_AVOIDANCE_ENABLED` 总开关，`True` 可一键恢复 Autoware 原厂阈值。
+- 同一组阈值同时写入 `_publish_live_parameters()` 和 `velocity_set.launch` 启动参数，
+  避免“循迹运行”或节点重启后避障被悄悄恢复。
+- RViz 启动改为后台运行并写入宿主机日志，避免阻塞控制台请求。
+
 ## 1.3.0
 
 - 控制令牌调整为 `801801801`。

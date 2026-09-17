@@ -35,6 +35,19 @@ class ControllerTests(unittest.TestCase):
         with self.assertRaises(ControllerError):
             self.controller.resolve_data_file("../secret.csv", ".csv")
 
+    def test_rviz_redirects_to_host_log_and_launches_in_background(self):
+        import shlex
+        import subprocess
+        with patch.object(self.controller, "_ros", return_value=subprocess.CompletedProcess([], 1)), patch.object(self.controller, "_run", return_value=subprocess.CompletedProcess([], 0, stdout="")) as run, patch("controller.time.sleep"):
+            self.controller._start_rviz()
+        command = run.call_args.args[0][2]
+        tokens = shlex.split(command)
+        self.assertEqual(tokens[tokens.index(">>") + 1], str(self.controller.logs_dir / "rviz.log"))
+        self.assertIn("nohup", tokens)
+        self.assertEqual(tokens[-1], "&")
+        inner = tokens[tokens.index("-lc") + 1]
+        self.assertIn("/from_host/bigcar-console/runtime/rviz.pid", inner)
+
     def test_simulated_workflow_progresses(self):
         (self.data / "map.pcd").write_text("VERSION .7\n", encoding="utf-8")
         (self.data / "route.csv").write_text("0,0,0,0,1\n1,0,0,0,1\n", encoding="utf-8")
@@ -135,9 +148,40 @@ class ControllerTests(unittest.TestCase):
 
         velocity_set = next(command for name, command in started if name == "velocity_set")
         self.assertIn("stop_distance_obstacle:=0.05", velocity_set)
+        self.assertIn("detection_range:=0.0", velocity_set)
+        self.assertIn("points_threshold:=2000000000", velocity_set)
         waypoint_loader = next(command for name, command in started if name == "waypoint_loader")
         self.assertIn("velocity_max:=0.72", waypoint_loader)
         self.assertIn("replanning_mode:=true", waypoint_loader)
+
+    def test_lidar_obstacle_avoidance_is_disabled_in_live_config(self):
+        import subprocess
+        import controller as controller_module
+
+        self.assertFalse(controller_module.LIDAR_OBSTACLE_AVOIDANCE_ENABLED)
+        published = []
+
+        def record(command, timeout=6):
+            published.append(command)
+            return subprocess.CompletedProcess([], 0, stdout="")
+
+        self.controller.simulate = False
+        with patch.object(self.controller, "_container_running", return_value=True), patch.object(
+            self.controller, "_ros", side_effect=record
+        ):
+            self.controller._publish_live_parameters({
+                "speed_limit_mps": 0.2,
+                "lookahead_distance_m": 2.0,
+                "obstacle_stop_distance_m": 0.05,
+            })
+
+        velocity_set = next(command for command in published if "/config/velocity_set" in command)
+        self.assertIn("detection_range: 0.0", velocity_set)
+        self.assertIn("threshold_points: 2000000000", velocity_set)
+        # The lidar thresholds must not silently fall back to the Autoware defaults.
+        self.assertNotIn("detection_range: 1.3", velocity_set)
+        self.assertNotIn("threshold_points: 10,", velocity_set)
+        self.assertIn("stop_distance_obstacle: 0.0500", velocity_set)
 
     def test_loop_route_is_repeated_and_speed_is_rewritten(self):
         source = self.data / "loop.csv"
