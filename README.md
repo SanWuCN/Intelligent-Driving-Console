@@ -11,10 +11,14 @@
 - 根据真实 ROS 节点、话题和话题消息推进流程，不把“按过按钮”当成“启动成功”。
 - 在车载桌面打开 Runtime Manager、控制终端和 RViz。
 - 网页内嵌可交互的 Jetson 屏幕监看，可直接操作 Runtime Manager 和 RViz。
+- 车端自带 RViz 式实时俯视图：点云地图、路线、实时位姿、激光雷达点云、行驶轨迹，
+  走 WebSocket 推流（地图只推一次，雷达 5 Hz，位姿 10 Hz）。
+- 顶部与侧栏实时显示底盘 BMS 剩余电量（`/bms_flag_Infor_fb`）。
 - 人工 `2D Pose Estimate` 完成后才启动 NDT。
 - 只列出配置数据目录中的 PCD/CSV，并跨浏览器重启记住上次选择。
 - 支持闭环轨迹自动连续跑圈，非闭环路径会被安全拒绝。
-- 运行中可调整限速、Pure Pursuit 前视距离、障碍停车距离和循环开关。
+- 运行中可调整循迹速度（0.2–2.0 m/s，滑杆+档位，改动即时下发）和自动循环开关。
+  前视距离、障碍停车距离改为后端固定值，不再暴露在界面上。
 - 监控 Docker、CAN、Hesai 激光雷达、TF、NDT、路径和控制话题。
 - 控制令牌、启动前安全确认、常驻软件急停和结构化日志。
 - 安全重启全部流程：先发布零速指令，再停止控制台管理的 ROS 节点。
@@ -40,13 +44,14 @@ NDT → Waypoints → Pure Pursuit → Twist Filter
 YHS 底盘节点 → CAN0 → 车辆
 ```
 
-详细数据流和状态判定见 [系统架构](docs/ARCHITECTURE.md)。
+详细数据流和状态判定见 [系统架构](docs/ARCHITECTURE.md)；
+实时地图与雷达的链路、协议和本机联调方式见 [实时地图与雷达](docs/LIVE_VIEW.md)。
 
 ## 当前车辆参数
 
 | 项目 | 当前值 |
 | --- | ---: |
-| 循迹速度上限 | `0.2 m/s` (`0.72 km/h`) |
+| 循迹速度 | 前端可设 `0.2–2.0 m/s`，默认 `0.2 m/s` (`0.72 km/h`) |
 | Pure Pursuit 最小前视距离 | `2 m` |
 | 激光雷达避障（`velocity_set` 点云停车） | **已关闭**（`detection_range 0.0` / `points_threshold 2000000000`） |
 | Autoware `velocity_set` 障碍停车距离 | `0.05 m`（仅在避障开启时生效） |
@@ -101,11 +106,17 @@ python3 backend/app.py --simulate --host 127.0.0.1 --port 8765
 ## 测试
 
 ```bash
-npm test
-npm run build
+npm test                                      # Python 单测（70 项）
+npm run build                                 # 类型检查 + 打包到 dist/
+
+# 浏览器集成测试：跑真实后端 + mock 桥接，校验 1366×768 排版、速度档位、
+# 电量上屏、地图与雷达真的画到画布上（需要一份真实 map.pcd/421.csv）
+PLAYWRIGHT_MODULE=playwright-core PLAYWRIGHT_CHANNEL=chrome \
+  LIVE_MAP_DIR=/tmp/bigcar-demo-data node tests/live-console-browser.mjs
 ```
 
-单元测试覆盖路径解析、路径穿越防护、流程状态、急停、重启、人工定位、`/ctrl_cmd` 成功判据、速度限制和障碍停车距离。
+单元测试覆盖路径解析、路径穿越防护、流程状态、急停、重启、人工定位、`/ctrl_cmd` 成功判据、
+速度范围与即时下发、桥接帧协议、PCD 解析、BMS 电量解析和地图请求去重。
 
 ## 车端部署
 

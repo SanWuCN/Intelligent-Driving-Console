@@ -38,6 +38,42 @@ export interface Telemetry {
   topic_count: number
 }
 
+/** 车端 BMS 上报的剩余电量（/bms_flag_Infor_fb + /bms_Infor_fb）。 */
+export interface BatteryState {
+  soc: number | null
+  voltage?: number | null
+  current?: number | null
+  remaining_ah?: number | null
+  temp_high?: number | null
+  temp_low?: number | null
+  low?: boolean
+  over?: boolean
+  charge?: boolean
+  speed?: number | null
+  stamp?: number
+  source?: 'live' | 'probe'
+}
+
+export interface LiveStatus {
+  running: boolean
+  ready: boolean
+  clients: number
+  frames: number
+  last_frame_at: number | null
+  error: string | null
+  map: string | null
+}
+
+export interface SpeedState {
+  min_mps: number
+  max_mps: number
+  value_mps: number
+  route_ceiling_mps: number
+  route_limited: boolean
+  live: boolean
+  detail: string
+}
+
 export interface ConsoleState {
   version: string
   simulated: boolean
@@ -51,6 +87,9 @@ export interface ConsoleState {
   modules: ModuleState[]
   workflow: WorkflowStep[]
   telemetry: Telemetry
+  battery: BatteryState | null
+  live: LiveStatus
+  speed: SpeedState
   maps: ConsoleFile[]
   routes: ConsoleFile[]
   selected_map: string

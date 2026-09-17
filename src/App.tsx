@@ -1,12 +1,12 @@
-import { AlertTriangle, KeyRound, LockKeyhole, Radio, Square, UserRound } from 'lucide-react'
+import { AlertTriangle, BatteryCharging, KeyRound, LockKeyhole, Radio, Square, UserRound } from 'lucide-react'
 import { useCallback, useEffect, useMemo, useState } from 'react'
-import { getJSON, getToken, postJSON, setToken } from './api'
+import { getToken, postJSON, setToken } from './api'
 import { RestartDialog, SafetyDialog, UnlockDialog } from './components/Dialogs'
+import { LiveMap } from './components/LiveMap'
 import { LogPanel } from './components/LogPanel'
-import { RouteMap } from './components/RouteMap'
 import { StatusPanel } from './components/StatusPanel'
 import { Workflow } from './components/Workflow'
-import type { RouteData, RuntimeParameters, WorkflowStep } from './types'
+import type { RuntimeParameters, WorkflowStep } from './types'
 import { useConsole } from './useConsole'
 
 const ACTIONS = ['environment_check', 'start_hardware', 'start_autoware', 'start_localization', 'load_route', 'start_tracking'] as const
@@ -18,7 +18,6 @@ function App() {
   const { state, connectionError, refresh } = useConsole()
   const [selectedMap, setSelectedMap] = useState(() => localStorage.getItem(MAP_KEY) || '')
   const [selectedRoute, setSelectedRoute] = useState(() => localStorage.getItem(ROUTE_KEY) || '')
-  const [route, setRoute] = useState<RouteData | null>(null)
   const [parameters, setParameters] = useState<RuntimeParameters | null>(null)
   const [parameterDirty, setParameterDirty] = useState(false)
   const [dialog, setDialog] = useState<'unlock' | 'safety' | 'restart' | null>(null)
@@ -36,15 +35,6 @@ function App() {
 
   useEffect(() => { if (selectedMap) localStorage.setItem(MAP_KEY, selectedMap) }, [selectedMap])
   useEffect(() => { if (selectedRoute) localStorage.setItem(ROUTE_KEY, selectedRoute) }, [selectedRoute])
-
-  useEffect(() => {
-    if (!selectedRoute) { setRoute(null); return }
-    let active = true
-    getJSON<RouteData>(`/api/route?file=${encodeURIComponent(selectedRoute)}`)
-      .then((value) => active && setRoute(value))
-      .catch(() => active && setRoute(null))
-    return () => { active = false }
-  }, [selectedRoute])
 
   useEffect(() => {
     if (!toast) return
@@ -73,6 +63,17 @@ function App() {
     if (step.id === 6) { setDialog('safety'); return }
     void action(ACTIONS[step.id - 1])
   }, [action, unlocked])
+
+  const setSpeed = useCallback(async (value: number) => {
+    if (!unlocked) { setDialog('unlock'); return }
+    try {
+      const result = await postJSON<{ ok: boolean; message: string }>('/api/action', { action: 'set_speed', speed_limit_mps: value })
+      setToast({ text: result.message })
+      await refresh()
+    } catch (error) {
+      setToast({ text: (error as Error).message, error: true })
+    }
+  }, [refresh, unlocked])
 
   const requireUnlock = useCallback(() => setDialog('unlock'), [])
 
@@ -116,6 +117,12 @@ function App() {
 
       <div className="telemetry-strip" aria-label="关键遥测">
         <span className={isRunning ? 'running' : ''}><Radio aria-hidden="true" />{isRunning ? '循迹运行中' : state.busy ? state.busy : '系统待命'}</span>
+        <span className={`battery-strip ${state.battery?.low ? 'low' : ''} ${(state.battery?.soc ?? 100) <= 40 ? 'mid' : ''}`}>
+          <BatteryCharging aria-hidden="true" />
+          <small>剩余电量</small>
+          <strong>{state.battery?.soc == null ? '—' : `${Number(state.battery.soc).toFixed(0)}%`}</strong>
+          {state.battery?.voltage != null && <em>{Number(state.battery.voltage).toFixed(1)} V</em>}
+        </span>
         {metrics.map(([label, value]) => <span key={label}><small>{label}</small><strong>{value}</strong></span>)}
         <span><small>CAN0</small><strong>{state.telemetry.can0}</strong></span>
       </div>
@@ -130,11 +137,12 @@ function App() {
             setDialog('restart')
           }}
         />
-        <RouteMap
-          route={route}
+        <LiveMap
+          mapName={selectedMap}
+          routeName={selectedRoute}
           connected={connectionOnline}
           rvizRunning={state.rviz_running}
-          localizationReady={state.live_topics.includes('/current_pose')}
+          fallbackBattery={state.battery}
           onLaunchRviz={() => unlocked ? void action('launch_rviz') : setDialog('unlock')}
           onAuthRequired={requireUnlock}
         />
@@ -149,6 +157,8 @@ function App() {
           nextDisabled={fileBlocked || isRunning || !connectionOnline}
           parameters={parameters || state.parameters}
           parameterDirty={parameterDirty}
+          speed={state.speed}
+          battery={state.battery}
           onMapChange={(value) => {
             setSelectedMap(value)
             if (unlocked) void action('save_selection', { map: value, route: selectedRoute })
@@ -167,6 +177,7 @@ function App() {
             setParameterDirty(false)
             void action('update_parameters', { ...parameters })
           }}
+          onSpeedChange={(value) => { void setSpeed(value) }}
           onRefresh={() => void refresh()}
           onNext={() => {
             if (!unlocked) { setDialog('unlock'); return }

@@ -2,6 +2,38 @@
 
 ## 未发版（车端已应用，`VERSION` 仍为 1.3.0）
 
+### 实时地图与雷达（RViz 式画面）
+
+- 新增 `backend/ros_bridge.py`：容器内 Python 2.7 常驻桥接，把 `/bms_flag_Infor_fb`、
+  `/bms_Infor_fb`、`/current_pose`、`/final_waypoints`、`/points_raw` 和地图 PCD
+  以二进制帧推给控制台；只在有浏览器观看时运行。
+- 新增 `/api/live` WebSocket 推流（JSON + float32 点云）与 `/api/live-ticket` 一次性票据
+  （只读遥测，不需要解锁控制）。前端新增 `useLiveScene` 与 `LiveMap`，用 Canvas 2D
+  画出点云地图、路线、实时位姿、激光雷达点云和行驶轨迹，取代原来的静态 CSV 预览图。
+- 点云解析走 numpy 快路径：Jetson 上单帧 **1326 ms → 32 ms**；无 numpy 时退回纯 Python。
+- 修掉两个链路缺陷：`struct.Struct("<BI")` 原生对齐导致帧头错位；
+  实时流里缺 `docker` 或读文件出错会抛异常、握手后立刻断开。
+
+### 运行参数
+
+- 「限速」改为**设置速度**：范围 0.2–2.0 m/s，滑杆 + 0.2/0.4/0.6/0.8/1.0/1.5/2.0 档位；
+  改动即时下发 `/config/waypoint_replanner`（velocity_max，单位 km/h）与
+  `/config/waypoint_follower`，同时同步已生成的循环路径航点速度。
+- 下发改为后台线程 + 250 ms 合并窗口：请求线程不再被 3 次 `rostopic pub` 阻塞
+  （实测单次请求 19 s → 0.3 s），连续拖动只下发最后一次。
+- 界面移除「前视距离」「障碍停车」两个输入，后端保留固定值（2.0 m / 0.05 m）。
+
+### 电量与排版
+
+- 顶部遥测条、「系统状态」标题栏、机组管理车辆卡片都显示剩余电量
+  （`/bms_flag_Infor_fb` 的 SOC），低压与充电有独立配色提示。
+- 电量优先取实时桥接缓存；没人订阅时由 `ros_probe.py` 在 5 秒一次的话题探针里顺带读 BMS
+  （`AnyMsg` 需要按类型动态反序列化：`str(AnyMsg)` 会直接抛异常）。
+- 修复「文件与运行参数」面板在 1366×768 下的排版：速度改成单列卡片，主操作按钮吸底常驻，
+  参数面板不再横向溢出、页面不出现滚动条。
+
+### 其它
+
 - 关闭激光雷达避障：`velocity_set` 的 `detection_range` 由 `1.3 m` 改为 `0.0`、
   `threshold_points` / `points_threshold` 由 `10` 改为 `2000000000`，点云不再把目标速度压到 0。
 - 新增 `LIDAR_OBSTACLE_AVOIDANCE_ENABLED` 总开关，`True` 可一键恢复 Autoware 原厂阈值。

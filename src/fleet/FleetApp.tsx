@@ -265,6 +265,7 @@ export default function FleetApp() {
                           <span className={`fleet-badge ${!v.online ? 'offline' : isAbnormal(v) ? 'failed' : 'completed'}`}>{stateLabel(v)}</span>
                           {v.state?.simulated && <span className="fleet-badge">模拟设备</span>}
                           <div className="fleet-metrics">
+                            <span>电量<strong className={(v.state?.battery?.soc ?? 100) <= 20 ? 'low' : ''}>{v.state?.battery?.soc == null ? '—' : `${Number(v.state.battery.soc).toFixed(0)}%`}</strong></span>
                             <span>CPU<strong>{v.state?.telemetry.cpu_percent ?? '—'}%</strong></span>
                             <span>温度<strong>{v.state?.telemetry.temperature_c ?? '—'}°C</strong></span>
                             <span>ROS 节点<strong>{v.state?.telemetry.node_count ?? '—'}</strong></span>

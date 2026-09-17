@@ -57,7 +57,9 @@ sudo journalctl -u bigcar-console.service -f
 
 1. 在开发机执行测试与构建。
 2. 用 rsync 同步代码，继续排除 `runtime/config.json`。
-3. 重启 Web 服务：
+3. **`dist/` 也要一起同步**：只更新 `backend/` 会出现「后端已经是新版、页面还是旧包」的
+   错位（页面按文件哈希找 JS，旧 bundle 里没有新界面）。
+4. 重启 Web 服务：
 
 ```bash
 sudo systemctl restart bigcar-console.service
@@ -65,7 +67,38 @@ sudo systemctl restart bigcar-console.service
 
 重启 Web 服务不会自动重启或停止已运行的 ROS 节点。如需重置整套车辆流程，应在控制台中使用“重启流程”。
 
-## 6. 上车检查
+### 实时画面相关的车端依赖
+
+实时地图/雷达靠容器内的 `python2` 跑 `backend/ros_bridge.py`：
+
+- 服务以 root 运行，`LiveBridge` 自己执行
+  `docker exec -i autoware_ai_orin bash -lc "<source ROS>; exec python2 ros_bridge.py"`，
+  不需要额外的 systemd 单元；容器里的 `python` 是 Python 3 且没 source ROS，必须走 `bash -lc`。
+- 容器内需要 `numpy`（Jetson 镜像自带 1.13）才能让单帧点云从 ~1.3 s 降到 ~30 ms；
+  没有 numpy 时会自动退回纯 Python。
+- 只有浏览器打开实时视图时才启动桥接，页面全部关闭后桥接会收到 `stop` 并进入空闲。
+- 排查：
+
+```bash
+curl -s http://127.0.0.1:8765/api/state | python3 -m json.tool | grep -A 8 '"live"'
+tail -f /home/nvidia/Desktop/bigcar-console/runtime/logs/console.log   # 找 live/tuning 两栏
+```
+
+## 6. VNC 开机后无法连接
+
+若 `journalctl -b` 出现 `ordering cycle` 并删除 `x11vnc.service/start`，检查服务是否同时配置 `After=graphical.target` 和 `WantedBy=multi-user.target`。这会形成启动依赖循环。可用仓库内修正后的服务替换：
+
+```bash
+sudo install -m 0644 deploy/x11vnc.service /etc/systemd/system/x11vnc.service
+sudo systemctl daemon-reload
+sudo systemctl enable --now x11vnc.service
+```
+
+该服务沿用 `/etc/x11vnc.pass`，共享物理桌面 `:0`，连接端口为 `5900`。旧的 `vnc-resolution.service` 将屏幕降为 `1366x768`，1920×1080 车载屏应禁用该旧服务。`5901` 是独立虚拟桌面，不是物理车载屏幕。
+
+若网页屏幕监看缺少 VNC 凭证，可在车端执行 `sudo python3 deploy/sync_vnc_credentials.py`，随后重启 `bigcar-console`。该脚本依赖车端 Python 的 `Crypto.Cipher.DES`，读取现有 VNC 密码文件并写入权限为 `0600` 的运行配置，不更改或显示密码。
+
+## 7. 上车检查
 
 - 物理急停可用，遥控器可立即接管。
 - 车辆周围无人员和障碍物。
