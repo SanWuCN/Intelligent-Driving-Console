@@ -1085,7 +1085,7 @@ class BigCarController:
             last_error = self._last_error
             emergency = self._emergency
         workflow = []
-        action_labels = ["重新检查环境", "启动底盘与雷达", "打开 Autoware 与终端", "打开 RViz 并开始标定", "加载路径与规划", "开始循迹"]
+        action_labels = ["重新检查环境", "启动底盘与雷达", "打开 Autoware 与终端", "打开 RViz 并开始标定", "加载路径与规划", "开始自主巡航"]
         for index, title in enumerate(titles, 1):
             if index <= stage:
                 state, detail = "done", "已完成"

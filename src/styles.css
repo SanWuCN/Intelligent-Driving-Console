@@ -97,16 +97,21 @@ button:focus-visible, input:focus-visible, select:focus-visible { outline: 3px s
 .workflow-restart svg { width: 15px; height: 15px; }
 .workflow-list { height: calc(100% - 71px); margin: 0; padding: 8px 0 14px; list-style: none; overflow: auto; }
 /* 精简模式：只留「第几步 + 名称 + 状态」，六步正好铺满左侧面板 */
-.workflow-panel.compact .workflow-list { height: calc(100% - 55px); padding: 0; display: flex; flex-direction: column; }
-.workflow-panel.compact .workflow-step { flex: 1 1 0; min-height: 0; padding: 4px 10px 4px 52px; display: flex; flex-direction: column; justify-content: center; }
+.workflow-panel.compact .workflow-list { height: calc(100% - 58px); padding: 0; display: flex; flex-direction: column;
+  box-sizing: border-box; }
+.workflow-panel.compact .workflow-step { flex: 1 1 0; min-height: 46px; padding: 3px 10px 3px 52px; display: flex; flex-direction: column; justify-content: center; }
 .workflow-panel.compact .workflow-step.current,
 .workflow-panel.compact .workflow-step.running { margin: 0 6px; padding-left: 46px; }
 .workflow-panel.compact .step-icon { top: 50%; transform: translateY(-50%); left: 12px; }
+.workflow-panel.compact .step-content { min-width: 0; overflow: hidden; }
 .workflow-panel.compact .step-content small { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 /* 静态状态（已完成 / 等待上一步）不再重复显示，只保留需要动手或有异常时的提示 */
 .workflow-panel.compact .workflow-step.done .step-content small,
 .workflow-panel.compact .workflow-step.waiting .step-content small { display: none; }
-.workflow-panel.compact .step-action { display: none; }
+/* 每步的手动按钮保留（尺寸与主按钮一致，高屏矮屏都不溢出）：
+   一键启动会自动走流程，也可以像以前那样一步步点。 */
+.workflow-panel.compact .step-action { min-height: 26px; margin-top: 3px; padding: 0 9px; font-size: 11px; }
+.file-panel .primary-action, .file-panel .primary-row { margin-bottom: 0; }
 .workflow-panel.compact .workflow-heading { min-height: 55px; }
 .workflow-step { position: relative; min-height: 72px; padding: 9px 12px 9px 56px; }
 .workflow-step.current, .workflow-step.running { margin: 0 7px; padding-left: 49px; border-radius: 5px; background: var(--blue-soft); }
@@ -265,8 +270,6 @@ button:focus-visible, input:focus-visible, select:focus-visible { outline: 3px s
 .parameter-save svg { width: 14px; height: 14px; }
 /* 1366×768 上面板内容高于可视区：主按钮钉在底部，「开始循迹」永远点得到。 */
 .file-panel .primary-action { position: sticky; bottom: 0; z-index: 2; }
-/* 与左侧流程面板底边对齐：去掉底部留白 */
-.file-panel .primary-action, .file-panel .primary-row { margin-bottom: 0; }
 .primary-action { width: calc(100% - 20px); min-height: 48px; margin: 11px 10px 0; display: flex; align-items: center; justify-content: center; gap: 9px; color: #fff; background: #1477d8; border: 0; border-radius: 5px; font-size: 16px; font-weight: 700; box-shadow: 0 3px 8px rgba(20,91,184,.22); }
 .primary-action:hover { background: var(--blue-strong); }
 .primary-action:disabled { color: #8b9bad; background: #dfe7ef; box-shadow: none; }

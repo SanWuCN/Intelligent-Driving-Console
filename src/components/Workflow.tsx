@@ -37,7 +37,7 @@ export function Workflow({ steps, busy, compact = false, onStart, onRestart }: P
                 <em>{step.state === 'done' ? '已完成' : step.state === 'running' ? '运行中' : step.state === 'current' ? '待启动' : step.state === 'blocked' ? '已阻止' : '等待中'}</em>
               </div>
               <small title={step.detail}>{step.detail}</small>
-              {step.state === 'current' && !compact ? (
+              {step.state === 'current' ? (
                 <button className="step-action" disabled={busy} onClick={() => onStart(step)}>
                   {step.action_label}
                 </button>

@@ -27,6 +27,9 @@ interface Props {
   onSpeedChange: (value: number) => void
   /** 一键启动：自动串起六步流程。 */
   autoRunning: boolean
+  /** 卡在需要人工的步骤（RViz 标定）时，主按钮用来手动确认继续。 */
+  manualStep?: boolean
+  onManualContinue: () => void
   autoProgress: string
   onAutoStart: () => void
   onAutoCancel: () => void
@@ -155,7 +158,7 @@ export function StatusPanel(props: Props) {
 
         {props.autoRunning ? (
           <div className="primary-row">
-            <button className="primary-action" disabled={props.busy || props.nextDisabled} onClick={props.onNext}>
+            <button className="primary-action" disabled={props.busy || props.nextDisabled} onClick={props.manualStep ? props.onManualContinue : props.onNext}>
               {props.busy ? <LoaderCircle className="spin" aria-hidden="true" /> : <Play aria-hidden="true" fill="currentColor" />}
               {props.busy ? '正在执行…' : props.nextLabel}
             </button>

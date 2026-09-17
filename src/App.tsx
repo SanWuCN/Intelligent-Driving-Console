@@ -145,12 +145,19 @@ function App() {
   const startAuto = useCallback(() => {
     if (!unlocked) { setDialog('unlock'); return }
     if (!connectionOnline) { setToast({ text: '车端未连接，无法一键启动', error: true }); return }
+    // 从当前进度接着往下走：已完成的步骤不重跑。
     const stage = Math.min(state?.current_stage ?? 1, 5)
     if (stage === 3 && !selectedMap) { setToast({ text: '请先选择地图文件', error: true }); return }
     if (stage >= 4 && (!selectedMap || !selectedRoute)) { setToast({ text: '请先选择地图与路径文件', error: true }); return }
     autoSent.current = null
     // 只剩第 6 步的安全确认时，直接弹窗让人确认后开始巡航。
     if (stage >= 5) { setAuto({ stage: 5 }); setDialog('safety'); return }
+    // 已到第 4 步（地图与标定）：等 RViz 的 2D Pose Estimate，标定完自动继续。
+    if (stage === 4) {
+      setAuto({ stage: 4, awaiting: 'localized' })
+      setToast({ text: '请在 RViz 用 2D Pose Estimate 完成标定，完成后自动继续' })
+      return
+    }
     setAuto({ stage })
     void action(ACTIONS[stage])
   }, [action, connectionOnline, selectedMap, selectedRoute, state, unlocked])
@@ -227,11 +234,13 @@ function App() {
           selectedMap={selectedMap}
           selectedRoute={selectedRoute}
           busy={busy}
-          nextLabel={isRunning ? '巡航运行中' : ACTION_LABELS[Math.min(nextStage + 1, 5)]}
+          nextLabel={isRunning ? '巡航运行中' : auto?.awaiting === 'localized' ? '标定完成，继续' : ACTION_LABELS[Math.min(nextStage + 1, 5)]}
           nextDisabled={fileBlocked || isRunning}
+          manualStep={auto?.awaiting === 'localized'}
           autoRunning={Boolean(auto)}
           autoProgress={autoProgress}
           onAutoStart={startAuto}
+          onManualContinue={startAuto}
           onAutoCancel={() => cancelAuto('已停止自动执行，当前步骤未受影响')}
           parameters={parameters || state.parameters}
           parameterDirty={parameterDirty}
