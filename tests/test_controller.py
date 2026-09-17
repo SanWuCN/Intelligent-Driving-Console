@@ -74,11 +74,12 @@ class ControllerTests(unittest.TestCase):
             "/astar_avoid", "/velocity_set", "/pure_pursuit", "/twist_filter",
             "/twist_gate",
         }
-        live = {"/points_raw", "/current_pose", "/final_waypoints"}
+        live = {"/points_raw", "/current_pose", "/final_waypoints", "/ctrl_fb"}
         self.controller.simulate = False
         with patch.object(self.controller, "_container_running", return_value=True):
             self.assertEqual(self.controller._stage(nodes, live), 5)
             self.assertEqual(self.controller._stage(nodes, live | {"/ctrl_cmd"}), 6)
+            self.assertEqual(self.controller._stage(nodes, (live | {"/ctrl_cmd"}) - {"/ctrl_fb"}), 1)
 
     def test_tracking_enables_control_command_output(self):
         self.controller.simulate = False
@@ -86,7 +87,7 @@ class ControllerTests(unittest.TestCase):
         with patch.object(
             self.controller,
             "_live_topics",
-            return_value={"/points_raw", "/current_pose", "/final_waypoints"},
+            return_value={"/points_raw", "/current_pose", "/final_waypoints", "/ctrl_fb"},
         ), patch.object(
             self.controller, "_start_process", side_effect=lambda name, command: started.append((name, command))
         ), patch.object(self.controller, "_topic_has_message", return_value=True), patch("controller.time.sleep"):
@@ -95,6 +96,24 @@ class ControllerTests(unittest.TestCase):
         pure_pursuit = next(command for name, command in started if name == "pure_pursuit")
         self.assertIn("publishes_for_steering_robot:=true", pure_pursuit)
         self.assertIn("minimum_lookahead_distance:=2.0", pure_pursuit)
+
+    def test_tracking_rejects_missing_chassis_feedback(self):
+        self.controller.simulate = False
+        with patch.object(self.controller, "_live_topics", return_value={
+            "/points_raw", "/current_pose", "/final_waypoints"
+        }), patch.object(self.controller, "_start_process") as start:
+            with self.assertRaisesRegex(ControllerError, "底盘没有实时反馈"):
+                self.controller._launch_stage("start_tracking", {"safety_confirmed": True})
+            start.assert_not_called()
+
+    def test_stale_chassis_registration_is_not_healthy(self):
+        self.controller._sim_stage = 6
+        with patch.object(self.controller, "_live_topics", return_value={"/ctrl_cmd", "/points_raw"}):
+            state = self.controller.snapshot()
+        modules = {module["key"]: module for module in state["modules"]}
+        self.assertEqual(modules["chassis"]["state"], "error")
+        self.assertEqual(modules["planning"]["state"], "warn")
+        self.assertEqual(state["workflow"][5]["state"], "blocked")
 
     def test_route_uses_five_centimeter_obstacle_stop_distance(self):
         (self.data / "route.csv").write_text("0,0,0,0,1\n1,0,0,0,1\n", encoding="utf-8")
@@ -136,6 +155,19 @@ class ControllerTests(unittest.TestCase):
         source.write_text("0,0,0,0,1\n1,0,0,0,1\n4,0,0,0,1\n", encoding="utf-8")
         with self.assertRaisesRegex(ControllerError, "路径未闭环"):
             self.controller._prepare_loop_route(source, 0.2, laps=2)
+
+    def test_loop_csv_preserves_autoware_change_flag_header(self):
+        source = self.data / "route.csv"
+        source.write_bytes(b"x,y,z,yaw,velocity,change_flag\r\n0,0,0,0,0,0\r\n1,0,0,0,1,1\r\n0,0,0,0,0,0\r\n")
+        target = self.controller._prepare_loop_route(source, 0.2, laps=2)
+        raw = target.read_bytes()
+        self.assertNotIn(b"\r", raw)
+        # Match the loader's getline + comma split, without Python newline normalization.
+        lines = raw.decode().split("\n")
+        headers = lines[0].split(",")
+        self.assertEqual(headers[-1], "change_flag")
+        flags = [int(dict(zip(headers, line.split(",")))["change_flag"]) for line in lines[1:] if line]
+        self.assertEqual(flags, [0, 1, 0, 0, 1, 0])
 
     def test_parameters_are_validated_and_persisted(self):
         self.controller._update_parameters({

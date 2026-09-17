@@ -182,7 +182,7 @@ class BigCarController:
             self._live_cache = (now, set())
             return set(), set()
         try:
-            watched = ("/points_raw", "/points_no_ground", "/current_pose", "/final_waypoints", "/ctrl_cmd")
+            watched = ("/points_raw", "/points_no_ground", "/current_pose", "/final_waypoints", "/ctrl_cmd", "/ctrl_fb")
             probes = " ".join(shlex.quote(topic) for topic in watched)
             result = self._ros(f"python2 /from_host/bigcar-console/backend/ros_probe.py {probes}", timeout=4)
             section = None
@@ -219,7 +219,7 @@ class BigCarController:
         if self.simulate:
             live: Set[str] = set()
             if self._sim_stage >= 2:
-                live.update({"/points_raw", "/points_no_ground"})
+                live.update({"/points_raw", "/points_no_ground", "/ctrl_fb"})
             if self._sim_stage >= 4:
                 live.add("/current_pose")
             if self._sim_stage >= 5:
@@ -240,7 +240,7 @@ class BigCarController:
         if not self._container_running():
             return 0
         stage = 1
-        if self._contains(nodes, "yhs_can_control_qt_node", "hesai_lidar") and "/points_raw" in live_topics:
+        if self._contains(nodes, "yhs_can_control_qt_node", "hesai_lidar") and {"/points_raw", "/ctrl_fb"}.issubset(live_topics):
             stage = 2
         else:
             return stage
@@ -383,7 +383,8 @@ class BigCarController:
                 row[4] = f"{velocity_kph:.4f}"
         target = self.runtime / "loop_route.csv"
         with target.open("w", encoding="utf-8", newline="") as handle:
-            writer = csv.writer(handle)
+            # Autoware's CSV parser does not strip CR from the last header field.
+            writer = csv.writer(handle, lineterminator="\n")
             writer.writerows(header_rows)
             for _ in range(laps):
                 writer.writerows(waypoint_rows)
@@ -447,6 +448,7 @@ class BigCarController:
         pose_ok = "/current_pose" in live_topics
         route_ok = "/final_waypoints" in live_topics
         chassis_node = self._contains(nodes, "yhs_can_control_qt_node")
+        chassis_feedback = "/ctrl_fb" in live_topics
         lidar_node = self._contains(nodes, "hesai_lidar")
         tf_ok = self._contains(nodes, "base_link_to_localizer", "robot_state_publisher")
         ndt_nodes = self._contains(nodes, "points_map_loader", "ndt_matching", "pose_relay", "vel_relay")
@@ -457,15 +459,17 @@ class BigCarController:
         rviz_running = stage >= 3 and any("rviz" in node.lower() for node in nodes)
         modules = [
             self._module("docker", "Docker 容器", "ok" if container_ok else "error", f"{self.container} 运行中" if container_ok else "容器未运行"),
-            self._module("chassis", "底盘（CAN）", "ok" if chassis_node else "idle", f"CAN0 {self._can_state()}" if chassis_node else "底盘节点未启动"),
+            self._module("chassis", "底盘（CAN）", "ok" if chassis_feedback else "error" if chassis_node else "idle", f"CAN0 {self._can_state()} · /ctrl_fb 实时" if chassis_feedback else "底盘无实时反馈，请检查进程和 CAN 通信" if chassis_node else "底盘节点未启动"),
             self._module("lidar", "Hesai 激光雷达", "ok" if "/points_raw" in live_topics else "warn" if lidar_node else "idle", "PandarXT-16 · /points_raw 实时" if "/points_raw" in live_topics else "驱动已启动，但 /points_raw 暂无实时数据" if lidar_node else "雷达节点未启动"),
             self._module("tf", "Autoware / TF", "ok" if tf_ok else "idle", "Runtime Manager · base_link → velodyne" if tf_ok else "Autoware 尚未启动"),
             self._module("ndt", "NDT 定位", "ok" if pose_ok else "warn" if (ndt_nodes or localization_bootstrap) and map_ok else "idle", "/current_pose 实时" if pose_ok else "地图和雷达已显示，请设置 2D Pose" if localization_bootstrap and map_ok else "定位计算中，等待 /current_pose" if ndt_nodes and map_ok else "定位节点未启动"),
             self._module(
                 "planning",
                 "路径规划/跟踪",
-                "ok" if control_output else "warn" if control_nodes or route_ok else "idle",
-                "/ctrl_cmd 实时，底盘控制链路已接通"
+                "ok" if control_output and chassis_feedback else "warn" if control_output or control_nodes or route_ok else "idle",
+                "/ctrl_cmd 与底盘反馈实时，车辆运动状态请以现场为准"
+                if control_output and chassis_feedback
+                else "/ctrl_cmd 有输出，但底盘无实时反馈"
                 if control_output
                 else "控制节点已启动，但 /ctrl_cmd 无实时数据"
                 if control_nodes
@@ -510,6 +514,10 @@ class BigCarController:
                 state, detail = "current", "规划节点已启动，但 /final_waypoints 暂无实时数据"
             if index == 6 and control_nodes and not control_output:
                 state, detail = "current", "控制节点已启动，但 /ctrl_cmd 没有实时输出"
+            if index == 2 and chassis_node and not chassis_feedback:
+                state, detail = "current", "底盘无实时反馈，请检查进程和 CAN 通信"
+            if index == 6 and control_output and not chassis_feedback:
+                state, detail = "blocked", "底盘无实时反馈，不能判定为循迹运行"
             workflow.append({"id": index, "title": title, "description": description, "state": state, "detail": detail, "action_label": action_labels[index - 1]})
         cpu = psutil.cpu_percent(interval=None) if psutil else None
         memory = psutil.virtual_memory().percent if psutil else None
@@ -584,6 +592,39 @@ class BigCarController:
         except OSError as exc:
             self.log("WARN", "autoware_ui", f"终端窗口打开失败：{exc}")
 
+    def _start_rviz(self) -> None:
+        """Run RViz in the container mount/network namespaces with host IPC.
+
+        Jetson's Qt/X11 stack can render the 3D view while dropping dock widgets
+        when the container has a separate IPC namespace.  Sharing only IPC keeps
+        the container filesystem and ROS environment while fixing Qt's X11 path.
+        """
+        pid_file = "/from_host/bigcar-console/runtime/rviz.pid"
+        log_file = "/from_host/bigcar-console/runtime/logs/rviz.log"
+        check = self._ros(f"p=$(cat {shlex.quote(pid_file)} 2>/dev/null || true); test -n \"$p\" && kill -0 \"$p\" 2>/dev/null", timeout=4)
+        if check.returncode == 0:
+            self.log("INFO", "rviz", "进程已在运行，跳过重复启动")
+            return
+        display = str(self.config.get("display", ":0"))
+        xauth = str(self.config.get("xauthority", "/run/user/1000/gdm/Xauthority"))
+        command = (
+            "container_pid=$(docker inspect -f '{{.State.Pid}}' " + shlex.quote(self.container) + "); "
+            "test -n \"$container_pid\" -a \"$container_pid\" != 0; "
+            "nsenter --target \"$container_pid\" --mount --uts --net --pid bash -lc "
+            + shlex.quote(
+                f"source /opt/ros/melodic/setup.bash; source /root/autoware_1.14.0/install/setup.bash; "
+                f"export DISPLAY={shlex.quote(display)} XAUTHORITY={shlex.quote(xauth)}; "
+                f"echo $$ > {shlex.quote(pid_file)}; "
+                "exec rosrun rviz rviz -d $(rospack find autoware_quickstart_examples)/launch/rosbag_demo/default.rviz"
+            )
+            + f" >> {shlex.quote(log_file)} 2>&1"
+        )
+        result = self._run(["bash", "-lc", command], timeout=10)
+        if result.returncode != 0:
+            raise ControllerError(f"rviz 启动失败：{result.stdout.strip()}")
+        self.log("INFO", "rviz", "已使用宿主机 IPC 启动 RViz，工具栏和面板可正常显示")
+        time.sleep(0.5)
+
     def _launch_stage(self, action: str, data: Dict[str, Any]) -> None:
         if action == "environment_check":
             if not self._container_running():
@@ -621,7 +662,7 @@ class BigCarController:
             self._start_process("map_loader", f"roslaunch map_file points_map_loader.launch path_pcd:={shlex.quote(container_path)}")
             self._start_process("vel_pose", "roslaunch autoware_connector vel_pose_connect.launch topic_pose_stamped:=/ndt_pose topic_twist_stamped:=/estimate_twist")
             self._start_process("localization_bootstrap", "python2 /from_host/bigcar-console/backend/localization_bootstrap.py")
-            self._start_process("rviz", "rosrun rviz rviz -d $(rospack find autoware_quickstart_examples)/launch/rosbag_demo/default.rviz")
+            self._start_rviz()
             self.log("WARN", "localization", "RViz 已打开：请使用 2D Pose Estimate 人工设置车辆位置和朝向")
             return
         if action == "load_route":
@@ -660,12 +701,13 @@ class BigCarController:
             if data.get("safety_confirmed") is not True:
                 raise ControllerError("必须完成安全确认后才能启动循迹")
             current_live = self._live_topics(force=True)
-            missing = [topic for topic in ("/points_raw", "/current_pose", "/final_waypoints") if topic not in current_live]
+            missing = [topic for topic in ("/points_raw", "/current_pose", "/final_waypoints", "/ctrl_fb") if topic not in current_live]
             if missing:
                 reasons = {
                     "/points_raw": "激光雷达没有实时点云",
                     "/current_pose": "尚未在 RViz 完成人工初始位姿标定",
                     "/final_waypoints": "规划链路尚未生成最终航点",
+                    "/ctrl_fb": "底盘没有实时反馈，请检查进程和 CAN 通信",
                 }
                 raise ControllerError("启动被阻止：" + "；".join(reasons[topic] for topic in missing))
             self._start_process("twist_filter", "roslaunch twist_filter twist_filter.launch")
@@ -690,7 +732,7 @@ class BigCarController:
             self.log("WARN", "safety", "循迹控制已启动，请保持物理急停可用")
             return
         if action == "launch_rviz":
-            self._start_process("rviz", "rosrun rviz rviz -d $(rospack find autoware_quickstart_examples)/launch/rosbag_demo/default.rviz")
+            self._start_rviz()
             return
         raise ControllerError(f"未知动作：{action}")
 
