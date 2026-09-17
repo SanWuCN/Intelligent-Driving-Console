@@ -11,9 +11,15 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1] / 'backend'))
 from fleet import ACTIONS, TITLES, Fleet, FleetError
 
 
+def default_remote():
+    return {'current_stage': 0, 'workflow': [], 'telemetry': {}, 'maps': [{'name': 'room.pcd'}], 'routes': [{'name': 'loop.csv'}], 'selected_map': 'room.pcd', 'selected_route': 'loop.csv', 'busy': None, 'last_error': None, 'emergency': False, 'live_topics': [], 'simulated': False}
+
+
 class FakeFleet(Fleet):
     def __init__(self, path):
-        self.remote = {'current_stage': 0, 'workflow': [], 'telemetry': {}, 'maps': [{'name': 'room.pcd'}], 'routes': [{'name': 'loop.csv'}], 'selected_map': 'room.pcd', 'selected_route': 'loop.csv', 'busy': None, 'last_error': None, 'emergency': False, 'live_topics': [], 'simulated': False}
+        self.remote = default_remote()
+        # Per-vehicle overrides so a multi-car batch can be driven out of lockstep.
+        self.remotes = {}
         self.calls = []
         self.unreachable = False
         self.flaky = 0
@@ -29,17 +35,18 @@ class FakeFleet(Fleet):
         if self.unreachable:
             raise FleetError('offline')
         with self.lock:
+            remote = self.remotes.setdefault(vehicle['id'], self.remote)
             if body is not None:
                 action = body['action']
                 self.calls.append(action)
                 if action == 'emergency_stop':
-                    self.remote['emergency'] = True
+                    remote['emergency'] = True
                 elif action == 'restart_workflow':
-                    self.remote['current_stage'] = 0
+                    remote['current_stage'] = 0
                 elif action in ACTIONS and action != 'start_localization':
-                    self.remote['current_stage'] = ACTIONS.index(action) + 1
+                    remote['current_stage'] = ACTIONS.index(action) + 1
                 return {'ok': True}
-            return copy.deepcopy(self.remote)
+            return copy.deepcopy(remote)
 
 
 class FleetTests(unittest.TestCase):
@@ -68,6 +75,12 @@ class FleetTests(unittest.TestCase):
     def job(self, target=6):
         self.fleet.create_job({'vehicles': [self.identifier], 'target': target})
         return self.fleet.jobs[0], self.fleet.jobs[0]['rows'][0]
+
+    def add_second_car(self):
+        self.fleet.add({'name': 'Training 02', 'ip': '192.168.31.234', 'token': 'secret'})
+        second = next(key for key in self.fleet.vehicles if key != self.identifier)
+        self.fleet.remotes[second] = default_remote()
+        return second
 
     def localize(self, job, row):
         self.wait_for(lambda: row['status'] == 'awaiting_localization')
@@ -247,6 +260,46 @@ class FleetTests(unittest.TestCase):
         self.fleet.reset_vehicle(self.identifier)
         self.assertEqual(self.fleet.calls[-1], 'restart_workflow')
         self.assertEqual(self.fleet.remote['current_stage'], 0)
+
+    def test_batch_walks_one_step_for_every_car_before_advancing(self):
+        second = self.add_second_car()
+        self.fleet.create_job({'vehicles': [self.identifier, second]})
+        job = self.fleet.jobs[0]
+        first_row, second_row = job['rows']
+
+        # both cars must reach the localization gate before the batch is at step 4
+        self.wait_for(lambda: first_row['status'] == 'awaiting_localization' and second_row['status'] == 'awaiting_localization')
+        self.assertEqual(job['phase'], 4)
+        self.assertEqual(self.fleet.phase_state(job), 'localization')
+
+        # confirming one car must not let the batch move on
+        self.fleet.remote.update(current_stage=4, live_topics=['/current_pose'])
+        self.fleet.job_action(job['id'], {'vehicle_id': self.identifier, 'action': 'localization_done'})
+        time.sleep(0.6)
+        self.assertEqual(job['phase'], 4, 'batch advanced before every car finished the step')
+        self.assertEqual(second_row['status'], 'awaiting_localization')
+        self.assertNotIn('load_route', self.fleet.calls)
+        self.assertEqual([row['vehicle_id'] for row in job['rows'] if row['status'] == 'awaiting_localization'], [second])
+
+        # confirming the last car releases the whole batch into step 5 and 6
+        self.fleet.remotes[second].update(current_stage=4, live_topics=['/current_pose'])
+        self.fleet.job_action(job['id'], {'vehicle_id': second, 'action': 'localization_done'})
+        self.wait_for(lambda: job['phase'] == 6, timeout=6)
+        self.assertEqual([record['status'] for record in first_row['steps'][:5]], ['ok'] * 5)
+        self.assertEqual([record['status'] for record in second_row['steps'][:5]], ['ok'] * 5)
+        self.assertEqual(first_row['status'], 'awaiting_start')
+        self.assertEqual(second_row['status'], 'awaiting_start')
+
+    def test_cancelling_the_batch_releases_every_car(self):
+        second = self.add_second_car()
+        self.fleet.create_job({'vehicles': [self.identifier, second]})
+        job = self.fleet.jobs[0]
+        self.wait_for(lambda: all(row['status'] == 'awaiting_localization' for row in job['rows']))
+        self.assertEqual(self.fleet.cancel_job(job['id'])['cancelled'], 2)
+        self.assertEqual([row['status'] for row in job['rows']], ['cancelled', 'cancelled'])
+        self.assertEqual(self.fleet.phase_state(job), 'done')
+        with self.assertRaises(FleetError):
+            self.fleet.cancel_job(job['id'])
 
     def test_summary_and_released_cancel(self):
         job, row = self.job()

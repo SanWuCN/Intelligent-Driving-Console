@@ -66,9 +66,14 @@ export type Job = {
   created: number
   target: number
   target_title: string
+  phase: number
+  phase_state: PhaseState
+  phase_title: string
   rows: Row[]
   summary: JobSummary
 }
+
+export type PhaseState = 'queued' | 'running' | 'localization' | 'start' | 'done' | 'idle'
 
 export type Config = {
   vehicle_port: number
@@ -91,6 +96,15 @@ export const ROW_LABELS: Record<string, string> = {
   failed: '失败',
   cancelled: '已取消',
   interrupted: '已中断',
+}
+
+export const PHASE_LABEL: Record<PhaseState, string> = {
+  queued: '排队中',
+  running: '执行中',
+  localization: '逐辆人工定位',
+  start: '逐辆确认启动',
+  done: '已完成',
+  idle: '已结束',
 }
 
 export const STEP_LABELS: Record<StepStatus, string> = {
@@ -178,6 +192,8 @@ export function historyRows(jobs: Job[]) {
       created: job.created,
       target: job.target,
       target_title: job.target_title,
+      phase: job.phase,
+      phase_title: job.phase_title,
       vehicle: row.name,
       ip: row.ip,
       status: row.status,

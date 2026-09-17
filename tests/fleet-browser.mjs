@@ -31,16 +31,27 @@ try {
   // ---- create a batch and drive it to completion
   await page.getByLabel('全选', { exact: true }).check()
   await page.getByRole('button', { name: '批量启动（2）' }).click()
-  await page.getByLabel('执行至').selectOption('6')
-  await page.getByRole('button', { name: '启动批量流程' }).click()
-  await page.getByRole('button', { name: '人工定位队列（2）' }).waitFor({ timeout: 20000 })
+  assert.equal(await page.getByLabel('执行至').count(), 0, 'a batch no longer asks how far to run')
+  await page.getByRole('button', { name: '一键启动批量流程' }).click()
+
+  // The queue must come up on its own once the batch reaches 地图与标定.
+  const queueDialog = page.getByRole('dialog')
+  await queueDialog.getByRole('heading', { name: /人工定位 · 实训车 01 · 队列剩余 2 辆/ }).waitFor({ timeout: 30000 })
+
+  // Step synchronisation: every car sits on the same step, none has run ahead.
+  const currents = await page.locator('.fleet-job-row .fleet-progress > ol').evaluateAll(lists =>
+    lists.map(list => [...list.querySelectorAll('li')].findIndex(li => li.classList.contains('current')) + 1))
+  assert.deepEqual(currents, [4, 4], 'every car must be waiting on the same step before the batch advances')
+  assert.match(await page.locator('.fleet-job-meta .fleet-chip').first().innerText(), /整批第 4\/6 步 · 地图与标定 · 逐辆人工定位/)
+  const note = await page.locator('.fleet-batch-note').boundingBox()
+  assert.ok(note.width > 600 && note.height < 120, `batch note must span the page, not collapse (got ${Math.round(note.width)}x${Math.round(note.height)})`)
 
   // the batch page must show a real per-step ledger, not a static banner
   const job = page.locator('.fleet-job').first()
   await job.locator('.fleet-ledger table tbody tr').first().waitFor({ timeout: 10000 })
   assert.equal(await job.locator('.fleet-ledger tbody tr').count(), 8, 'one ledger row per executed step for each of the 2 cars')
   assert.equal(await job.getByText('等待人工定位', { exact: true }).count(), 2)
-  assert.match(await job.locator('.fleet-chip.waiting').innerText(), /等待人工 2/, 'job summary counts the cars waiting on a human')
+  assert.match(await job.locator('.fleet-job-summary .fleet-chip.waiting').innerText(), /等待人工 2/, 'job summary counts the cars waiting on a human')
   const firstLedger = await job.locator('.fleet-ledger tbody tr').first().innerText()
   assert.match(firstLedger, /环境检查/, 'ledger names each step')
   assert.match(firstLedger, /\d+ 秒/, 'ledger records a real duration')
@@ -56,14 +67,13 @@ try {
   }
   await page.screenshot({ path: 'runtime/screenshots/fleet-batch.png', fullPage: true })
 
-  // ---- localization queue
-  await page.getByRole('button', { name: '人工定位队列（2）' }).click()
-  for (const count of [2, 1]) {
-    await page.getByRole('heading', { name: new RegExp(`队列剩余 ${count} 辆`) }).waitFor()
-    await page.getByRole('button', { name: '完成定位，下一辆' }).click()
-  }
+  // ---- the queue walks car by car inside the same window
+  await queueDialog.getByRole('button', { name: '完成定位，下一辆' }).click()
+  await queueDialog.getByRole('heading', { name: /人工定位 · 实训车 02 · 队列剩余 1 辆/ }).waitFor({ timeout: 20000 })
+  assert.equal(await queueDialog.getByRole('heading', { name: /实训车 01/ }).count(), 0, 'the window switched to the next car')
+  await queueDialog.getByRole('button', { name: '完成定位，下一辆' }).click()
   await page.getByRole('heading', { name: '当前没有待定位车辆' }).waitFor()
-  await page.getByRole('dialog').getByRole('button', { name: '关闭', exact: true }).last().click()
+  await queueDialog.getByRole('button', { name: '关闭', exact: true }).last().click()
 
   // ---- tracking gate
   for (let i = 0; i < 2; i++) {
@@ -72,11 +82,11 @@ try {
     await page.getByRole('button', { name: '确认启动此车' }).click()
     await page.getByRole('dialog').waitFor({ state: 'hidden' })
   }
-  await page.getByText('暂无任务', { exact: true }).waitFor({ timeout: 15000 })
+  await page.getByText('暂无任务', { exact: true }).waitFor({ timeout: 20000 })
 
   // ---- task records page
   await page.getByRole('button', { name: '任务记录', exact: true }).click()
-  assert.equal(await page.getByText('目标流程完成', { exact: true }).count(), 2)
+  assert.equal(await page.getByText('六步流程完成', { exact: true }).count(), 2)
   assert.equal(await page.locator('.fleet-day').count(), 1, 'records are grouped by day')
   assert.match(await page.locator('.fleet-day > summary').first().innerText(), /\d+ 个任务/)
   const ledgerRows = page.locator('.fleet-ledger tbody tr')
@@ -133,7 +143,7 @@ try {
     assert.equal(await page.evaluate(() => document.querySelector('main').scrollWidth > document.querySelector('main').clientWidth), false, `${title} mobile overflow`)
   }
   assert.deepEqual(errors, [])
-  console.log('PASS: registration, batch ledger, localization queue, start gates, records search/filter/export/delete, settings, persistence, desktop/mobile layout; no browser errors')
+  console.log('PASS: registration, step-synchronised batch, self-opening localization queue that walks car by car, per-car start gates, records search/filter/export/delete, settings, persistence, desktop/mobile layout; no browser errors')
 } finally {
   await browser?.close()
   fixture.kill('SIGTERM')

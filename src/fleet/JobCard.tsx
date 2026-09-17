@@ -1,6 +1,6 @@
 import { AlertTriangle, Check, CircleSlash, Clock3, ExternalLink, Hourglass, Loader2, MapPin, Play, RefreshCw, RotateCcw, Square, Trash2 } from 'lucide-react'
 import {
-  ROW_LABELS, STEPS, TERMINAL, clock, duration, rowElapsed, stamp,
+  PHASE_LABEL, ROW_LABELS, STEPS, TERMINAL, clock, duration, rowElapsed, stamp,
   type Job, type Row, type StepRecord, type Vehicle,
 } from './fleetModel'
 
@@ -10,6 +10,7 @@ type Actions = {
   onJobAction: (job: Job, row: Row, action: string, success?: string) => void
   onReset: (row: Row) => void
   onDelete: (job: Job) => void
+  onCancelJob: (job: Job) => void
 }
 
 function stepClass(record: StepRecord | undefined) {
@@ -125,10 +126,11 @@ export function JobCard({ job, now, vehicles, actions, detailed = false }: {
 }) {
   const summary = job.summary
   const elapsed = summary.finished ? summary.finished - summary.started : now - summary.started
+  const title = job.target >= STEPS.length ? '批量六步流程' : `批量${job.target_title}`
   return (
     <section className="fleet-job">
       <div className="fleet-job-title">
-        <strong>批量{job.target_title} <small>#{job.id.slice(0, 8)}</small></strong>
+        <strong>{title} <small>#{job.id.slice(0, 8)}</small></strong>
         <div className="fleet-job-summary">
           <span className="fleet-chip total">共 {summary.total} 辆</span>
           {summary.completed > 0 && <span className="fleet-chip ok"><Check />成功 {summary.completed}</span>}
@@ -139,8 +141,16 @@ export function JobCard({ job, now, vehicles, actions, detailed = false }: {
           <span className="fleet-chip ghost"><Clock3 />{duration(elapsed)}</span>
         </div>
         <div className="fleet-job-meta">
+          {summary.active > 0
+            ? <span className={`fleet-chip ${job.phase_state === 'running' ? 'running' : 'waiting'}`}>
+                整批第 {job.phase}/{STEPS.length} 步 · {job.phase_title} · {PHASE_LABEL[job.phase_state]}
+              </span>
+            : <span className="fleet-chip ghost">整批六步已结束</span>}
           <span>创建 {stamp(job.created)}</span>
           <span>{summary.finished ? `结束 ${stamp(summary.finished)}` : '进行中'}</span>
+          {summary.active > 0 && (
+            <button className="danger" onClick={() => actions.onCancelJob(job)}><Square />取消整批</button>
+          )}
           {summary.active === 0 && (
             <button onClick={() => actions.onDelete(job)}><Trash2 />删除记录</button>
           )}

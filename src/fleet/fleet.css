@@ -75,3 +75,4 @@
 .fleet-inline {display:flex;align-items:center;gap:8px;color:#5f7690}
 .fleet-count {color:#708297;font-size:12px;margin-right:auto}
 .fleet-dialog code {background:#eef3f9;border-radius:3px;padding:1px 5px;font-size:12px}
+.fleet-batch-note {margin:0 0 20px;padding:12px 15px;background:#f4f8fd;border-left:3px solid #1464c4;border-radius:0 4px 4px 0;color:#4b6a8c;font-size:13px;line-height:1.75;max-width:1080px}

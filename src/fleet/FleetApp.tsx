@@ -61,8 +61,9 @@ export default function FleetApp() {
   const [start, setStart] = useState<{ job: Job; row: Row } | null>(null)
   const [reset, setReset] = useState<Row | null>(null)
   const [drop, setDrop] = useState<Job | null>(null)
+  const [abort, setAbort] = useState<Job | null>(null)
+  const [queueDismissed, setQueueDismissed] = useState(false)
   const [safe, setSafe] = useState(false)
-  const [target, setTarget] = useState(5)
   const [files, setFiles] = useState<Record<string, { map?: string; route?: string }>>({})
   const [historyFilter, setHistoryFilter] = useState('all')
   const [historyQuery, setHistoryQuery] = useState('')
@@ -117,6 +118,7 @@ export default function FleetApp() {
   const active = jobs.filter(job => job.summary.active > 0)
   const pending = jobs.flatMap(job => job.rows.filter(row => row.status === 'awaiting_localization').map(row => ({ job, row })))
   const current = queue ? pending[0] : undefined
+  const pendingCount = pending.length
   const screenId = current?.row.vehicle_id || screen
   const screenVehicle = vehicles.find(v => v.id === screenId)
   const screenAuthError = useCallback(() => setError('车端控制令牌无效，请在车辆编辑中更新'), [])
@@ -126,12 +128,21 @@ export default function FleetApp() {
     && (filter === '全部' || (filter === '在线' && v.online) || (filter === '离线' && !v.online) || (filter === '异常' && isAbnormal(v))))
   const jobAction = (job: Job, row: Row, action: string, extra = {}) => api(`jobs/${job.id}`, { vehicle_id: row.vehicle_id, action, ...extra })
 
+  // The batch stops at 地图与标定 until every car is localized, so bring the
+  // queue up by itself and let it walk car by car. Closing it is remembered
+  // until the next car reaches the gate.
+  useEffect(() => {
+    if (pendingCount === 0) { setQueueDismissed(false); return }
+    if (!queueDismissed) { setQueue(true); setScreen(null) }
+  }, [pendingCount, queueDismissed])
+
   const actions = {
-    onLocalize: (job: Job, row: Row) => { void job; setQueue(true); setScreen(null) },
+    onLocalize: (job: Job, row: Row) => { void job; void row; setQueueDismissed(false); setQueue(true); setScreen(null) },
     onStart: (job: Job, row: Row) => { setSafe(false); setStart({ job, row }) },
     onJobAction: (job: Job, row: Row, action: string, success = '') => { void execute(() => jobAction(job, row, action), success) },
     onReset: (row: Row) => setReset(row),
     onDelete: (job: Job) => setDrop(job),
+    onCancelJob: (job: Job) => setAbort(job),
   }
 
   // ------------------------------------------------------------------ history
@@ -286,15 +297,10 @@ export default function FleetApp() {
                 </li>
               ))}
             </ol>
-            <div className="fleet-task-config">
-              <label>执行至
-                <select value={target} onChange={e => setTarget(Number(e.target.value))}>
-                  <option value={4}>地图与标定</option>
-                  <option value={5}>路径配置（就绪待命）</option>
-                  <option value={6}>循迹运行（需确认）</option>
-                </select>
-              </label>
-            </div>
+            <p className="fleet-batch-note">
+              整批按下表逐辆走完同样六步：前一步所有车都完成，才进入下一步。第 4 步地图与标定会逐辆弹出屏幕让你定位，
+              第 6 步循迹运行需要逐辆确认现场安全。中途想停在第 5 步待命，在任务卡上点「取消整批」即可。
+            </p>
             {chosen.length === 0
               ? <div className="fleet-empty compact">尚未选择车辆<button onClick={() => go('vehicles')}>选择车辆</button></div>
               : <div className="fleet-table-wrap">
@@ -323,10 +329,10 @@ export default function FleetApp() {
                 </table>
               </div>}
             <div className="fleet-launch">
-              <span>{chosen.length} 辆车辆 · 执行至{STEPS[target - 1]}</span>
+              <span>{chosen.length} 辆车辆 · 完整六步流程 · 同一步逐辆执行</span>
               <button disabled={busy || !chosen.length || !!connectionError} className="primary"
-                onClick={() => void execute(() => api('jobs', { vehicles: chosen.map(v => v.id), target, files }), '批量流程已创建')}>
-                <Play />{busy ? '正在提交…' : '启动批量流程'}
+                onClick={() => void execute(() => api('jobs', { vehicles: chosen.map(v => v.id), files }), '批量流程已创建')}>
+                <Play />{busy ? '正在提交…' : '一键启动批量流程'}
               </button>
             </div>
 
@@ -450,6 +456,20 @@ export default function FleetApp() {
         </Dialog>
       )}
 
+      {abort && (
+        <Dialog title="取消整批任务" onClose={() => setAbort(null)}>
+          <p>取消 <code>#{abort.id.slice(0, 8)}</code> 里所有还没结束的车辆（{abort.summary.active} 辆）？</p>
+          <p>只阻止后续步骤，<strong>不会停止车端已经运行的 ROS 节点和循迹</strong>。需要停车请在车辆管理里用急停。</p>
+          {error && <p className="fleet-failure">{error}</p>}
+          <div className="fleet-dialog-actions">
+            <button onClick={() => setAbort(null)}>继续执行</button>
+            <button className="danger" disabled={busy} onClick={async () => {
+              if (await execute(() => api(`jobs/${abort.id}/cancel`, {}), '整批任务已取消')) setAbort(null)
+            }}><Square />确认取消整批</button>
+          </div>
+        </Dialog>
+      )}
+
       {drop && (
         <Dialog title="删除任务记录" onClose={() => setDrop(null)}>
           <p>删除任务 <code>#{drop.id.slice(0, 8)}</code>（{drop.rows.length} 辆车）？该任务的步骤明细和事件会一并删除，且不可恢复。</p>
@@ -465,7 +485,7 @@ export default function FleetApp() {
 
       {(screenId || queue) && (
         <Dialog wide title={current ? `人工定位 · ${current.row.name} · 队列剩余 ${pending.length} 辆` : screenVehicle ? `屏幕监看 · ${screenVehicle.name}` : '人工定位队列'}
-          onClose={() => { setScreen(null); setQueue(false) }}>
+          onClose={() => { setScreen(null); setQueue(false); if (pendingCount) setQueueDismissed(true) }}>
           {screenId ? <>
             <div className="fleet-screen-meta">
               <span>{screenVehicle?.ip} · {screenVehicle?.online ? '在线' : '连接不可用'}</span>

@@ -57,6 +57,8 @@ class Fleet:
             self.vehicles = saved['vehicles']
             self.jobs = saved['jobs']
         for job in self.jobs:
+            job.setdefault('phase', 0)
+            job.setdefault('phase_state', 'done')
             for row in job['rows']:
                 row.setdefault('steps', [])
                 row.setdefault('events', [])
@@ -167,10 +169,24 @@ class Fleet:
             'finished': max(finished) if finished and not live else None,
         }
 
+    @staticmethod
+    def phase_state(job):
+        live = [row for row in job['rows'] if row['status'] not in TERMINAL]
+        if not live:
+            return 'done' if job.get('phase_state') == 'done' else 'idle'
+        if any(row['status'] == 'awaiting_localization' for row in live):
+            return 'localization'
+        if any(row['status'] == 'awaiting_start' for row in live):
+            return 'start'
+        return 'running'
+
     def job_view(self, job):
         view = copy.deepcopy(job)
         view['summary'] = self.summarise(job)
         view['target_title'] = TITLES[job['target'] - 1]
+        view['phase'] = job.get('phase', 0)
+        view['phase_state'] = self.phase_state(job)
+        view['phase_title'] = TITLES[view['phase'] - 1] if 1 <= view['phase'] <= len(TITLES) else ''
         return view
 
     def snapshot(self):
@@ -233,11 +249,8 @@ class Fleet:
     # ---------------------------------------------------------------- job creation
     def create_job(self, data):
         identifiers = data.get('vehicles', [])
-        target = data.get('target', 5)
         if not isinstance(identifiers, list) or not identifiers or len(identifiers) > 50 or len(set(identifiers)) != len(identifiers):
             raise FleetError('请选择 1–50 辆车辆')
-        if target not in (4, 5, 6):
-            raise FleetError('无效的目标阶段')
         with self.lock:
             occupied = {row['vehicle_id'] for job in self.jobs for row in job['rows'] if row['status'] not in TERMINAL}
             rows = []
@@ -254,7 +267,7 @@ class Fleet:
                 route = files.get('route', state['selected_route'])
                 if map_name not in [f['name'] for f in state['maps']]:
                     raise FleetError(f"请为 {vehicle['name']} 选择地图")
-                if target >= 5 and route not in [f['name'] for f in state['routes']]:
+                if route not in [f['name'] for f in state['routes']]:
                     raise FleetError(f"请为 {vehicle['name']} 选择路径")
                 if state['emergency']:
                     raise FleetError(f"{vehicle['name']} 处于急停状态，请先在车端解除")
@@ -262,23 +275,43 @@ class Fleet:
                     raise FleetError(f"{vehicle['name']} 正在执行车端动作（{state['busy']}），请稍后再试")
                 if state['current_stage'] >= 6:
                     raise FleetError(f"{vehicle['name']} 已在循迹运行，请先在本页复位该车或直接在车端接管")
-                row = blank_row(vehicle, map_name, route)
-                rows.append(row)
-            job = {'id': uuid.uuid4().hex, 'created': time.time(), 'target': target, 'rows': rows}
+                rows.append(blank_row(vehicle, map_name, route))
+            # A batch always walks the whole six-step flow, one step for every car
+            # before the next step starts. There is no per-car finish line.
+            job = {'id': uuid.uuid4().hex, 'created': time.time(), 'target': len(ACTIONS), 'phase': 0,
+                   'phase_state': 'queued', 'rows': rows}
             self.jobs.insert(0, job)
             self.save()
         threading.Thread(target=self.run_job, args=(job,), daemon=True).start()
         return {'ok': True, 'id': job['id']}
 
+    def active_rows(self, job):
+        return [row for row in job['rows'] if row['status'] not in TERMINAL]
+
+    def set_phase(self, job, phase, phase_state):
+        with self.lock:
+            job.update(phase=phase, phase_state=phase_state, updated=time.time())
+            self.save()
+
     def run_job(self, job):
-        # One thread per car. Cars waiting for a human must not hold an execution
-        # slot that a ready car needs; actual vehicle actions stay serialised by
-        # dispatch_lock, so a large batch still only drives one car at a time.
-        threads = [threading.Thread(target=self.run_row, args=(job, row), daemon=True) for row in job['rows']]
-        for thread in threads:
-            thread.start()
-        for thread in threads:
-            thread.join()
+        """Step-synchronised batch: every car finishes step N before step N+1 starts.
+
+        Each step runs one thread per car; joining them is the barrier. A car that
+        fails the step drops out of the batch while the rest continue. Vehicle
+        actions stay serialised by dispatch_lock, so only one car is commanded at
+        a time even though the step itself is prepared in parallel.
+        """
+        for step in range(1, job['target'] + 1):
+            active = self.active_rows(job)
+            if not active:
+                break
+            self.set_phase(job, step, 'running')
+            threads = [threading.Thread(target=self.run_row_step, args=(job, row, step), daemon=True) for row in active]
+            for thread in threads:
+                thread.start()
+            for thread in threads:
+                thread.join()
+        self.set_phase(job, job['target'], 'done')
 
     def wait_state(self, row, predicate):
         deadline = time.monotonic() + self.settings['step_timeout']
@@ -335,64 +368,63 @@ class Fleet:
             time.sleep(0.5)
         return True
 
-    def run_row(self, job, row):
-        step = 0
+    def run_row_step(self, job, row, step):
+        """Run exactly one step of the flow for one car and settle it."""
         try:
+            if row['status'] in TERMINAL:
+                return
             vehicle = self.vehicle(row['vehicle_id'])
             self.change(row, status='running', started=row.get('started') or time.time(), finished=None,
                         attempts=int(row.get('attempts') or 0) + 1)
-            for step in range(1, job['target'] + 1):
-                if row['status'] == 'cancelled':
-                    self.close_open_steps(row, 'cancelled', '任务已取消')
-                    return
-                state = self.request(vehicle)
-                if state['emergency'] or state['busy']:
-                    raise FleetError('车端急停或正在执行其他动作')
-                if state['current_stage'] >= 6:
-                    raise FleetError('车辆已在其他会话进入循迹，已停止本任务')
-                # Map and route choices must be applied even when ROS already reached that stage.
-                skip = step <= 3 and state['current_stage'] >= step
-                self.begin_step(row, step, state['current_stage'])
-                self.change(row, status='running', step=step, message=TITLES[step - 1])
-                if step == 6:
-                    self.change(row, status='awaiting_start', message='等待循迹安全确认', waiting_since=time.time())
-                    while not row['safety_confirmed']:
-                        if row['status'] == 'cancelled':
-                            self.close_open_steps(row, 'cancelled', '任务已取消')
-                            return
-                        time.sleep(0.2)
-                if not skip:
-                    with self.dispatch_lock:
-                        if row['status'] == 'cancelled':
-                            self.close_open_steps(row, 'cancelled', '任务已取消')
-                            return
-                        self.request(vehicle, '/api/action', {'action': ACTIONS[step - 1], 'map': row['map'], 'route': row['route'], 'safety_confirmed': row['safety_confirmed']})
-                    self.note(row, 'INFO', f"已下发动作 {ACTIONS[step - 1]}", step)
-                    if step == 4:
-                        self.wait_state(row, lambda s: True)
-                        self.change(row, status='awaiting_localization', message='等待人工定位')
-                        if not self.wait_localization(row, vehicle):
-                            self.close_open_steps(row, 'cancelled', '任务已取消')
-                            return
-                    state = self.wait_state(row, lambda s: s['current_stage'] >= step)
-                    if state is False:
+            state = self.request(vehicle)
+            if state['emergency'] or state['busy']:
+                raise FleetError('车端急停或正在执行其他动作')
+            if state['current_stage'] >= 6 and step < 6:
+                raise FleetError('车辆已在其他会话进入循迹，已停止本任务')
+            # Map and route choices must be applied even when ROS already reached that stage.
+            skip = step <= 3 and state['current_stage'] >= step
+            self.begin_step(row, step, state['current_stage'])
+            self.change(row, status='running', step=step, message=TITLES[step - 1])
+            if step == 6:
+                self.change(row, status='awaiting_start', message='等待循迹安全确认', waiting_since=time.time())
+                while not row['safety_confirmed']:
+                    if row['status'] == 'cancelled':
                         self.close_open_steps(row, 'cancelled', '任务已取消')
                         return
-                else:
-                    self.note(row, 'INFO', f"车端已处于阶段 {state['current_stage']}，跳过该步动作", step)
-                after = self.refresh(row['vehicle_id'])
-                stage_after = after['state']['current_stage'] if after['online'] else None
-                detail = self.step_detail(after['state'], step, '已跳过（车端已就绪）' if skip else '状态校验通过') if after['online'] else '状态校验通过'
-                self.finish_step(row, step, skip, stage_after, detail)
-                self.note(row, 'INFO', f"{TITLES[step - 1]}：{detail}", step)
-                self.change(row, status='running', message=TITLES[step - 1] + '完成')
-            self.change(row, status='completed', message='目标流程完成', finished=time.time(), waiting_since=None)
+                    time.sleep(0.2)
+            if not skip:
+                with self.dispatch_lock:
+                    if row['status'] == 'cancelled':
+                        self.close_open_steps(row, 'cancelled', '任务已取消')
+                        return
+                    self.request(vehicle, '/api/action', {'action': ACTIONS[step - 1], 'map': row['map'], 'route': row['route'], 'safety_confirmed': row['safety_confirmed']})
+                self.note(row, 'INFO', f"已下发动作 {ACTIONS[step - 1]}", step)
+                if step == 4:
+                    self.wait_state(row, lambda s: True)
+                    self.change(row, status='awaiting_localization', message='等待人工定位')
+                    if not self.wait_localization(row, vehicle):
+                        self.close_open_steps(row, 'cancelled', '任务已取消')
+                        return
+                state = self.wait_state(row, lambda s: s['current_stage'] >= step)
+                if state is False:
+                    self.close_open_steps(row, 'cancelled', '任务已取消')
+                    return
+            else:
+                self.note(row, 'INFO', f"车端已处于阶段 {state['current_stage']}，跳过该步动作", step)
+            after = self.refresh(row['vehicle_id'])
+            stage_after = after['state']['current_stage'] if after['online'] else None
+            detail = self.step_detail(after['state'], step, '已跳过（车端已就绪）' if skip else '状态校验通过') if after['online'] else '状态校验通过'
+            self.finish_step(row, step, skip, stage_after, detail)
+            self.note(row, 'INFO', f"{TITLES[step - 1]}：{detail}", step)
+            if step == job['target']:
+                self.change(row, status='completed', message='六步流程完成', finished=time.time(), waiting_since=None)
+            else:
+                self.change(row, status='running', message=TITLES[step - 1] + '完成，等待其他车辆同步')
         except Exception as exc:
             message = str(exc)
-            if step:
-                self.fail_step(row, step, message)
+            self.fail_step(row, step, message)
             self.close_open_steps(row, 'failed', message)
-            self.note(row, 'ERROR', message, step or None)
+            self.note(row, 'ERROR', message, step)
             self.change(row, status='failed', message=message, finished=time.time(), waiting_since=None)
 
     # ---------------------------------------------------------------- row actions
@@ -443,7 +475,8 @@ class Fleet:
             new_row = blank_row(vehicle, row['map'], row['route'])
             new_row['attempts'] = int(row.get('attempts') or 0)
             self.change(row, retried=True)
-            new_job = {'id': uuid.uuid4().hex, 'created': time.time(), 'target': job['target'], 'rows': [new_row]}
+            new_job = {'id': uuid.uuid4().hex, 'created': time.time(), 'target': job['target'], 'phase': 0,
+                       'phase_state': 'queued', 'rows': [new_row]}
             with self.lock:
                 self.jobs.insert(0, new_job)
                 self.save()
@@ -452,6 +485,24 @@ class Fleet:
         else:
             raise FleetError('当前状态不支持该操作')
         return {'ok': True}
+
+    def cancel_job(self, identifier):
+        """Stop a batch: cancel every car that has not reached a terminal state."""
+        with self.lock:
+            job = next((j for j in self.jobs if j['id'] == identifier), None)
+            if not job:
+                raise FleetError('任务不存在')
+            live = [row for row in job['rows'] if row['status'] not in TERMINAL]
+            if not live:
+                raise FleetError('该任务已结束')
+        with self.dispatch_lock:
+            for row in live:
+                self.close_open_steps(row, 'cancelled', '整批取消')
+                self.note(row, 'WARN', '用户取消了整批任务；车端已运行的节点保持不动')
+                self.change(row, status='cancelled', message='已取消后续步骤；车端现有节点保持运行',
+                            finished=time.time(), waiting_since=None)
+        self.set_phase(job, job.get('phase', 0), 'done')
+        return {'ok': True, 'cancelled': len(live)}
 
     def delete_job(self, identifier):
         with self.lock:
@@ -565,6 +616,8 @@ class Handler(SimpleHTTPRequestHandler):
                 result = self.fleet.clear_jobs()
             elif len(parts) == 5 and parts[:3] == ['api', 'fleet', 'jobs'] and parts[4] == 'delete':
                 result = self.fleet.delete_job(parts[3])
+            elif len(parts) == 5 and parts[:3] == ['api', 'fleet', 'jobs'] and parts[4] == 'cancel':
+                result = self.fleet.cancel_job(parts[3])
             elif len(parts) == 4 and parts[:3] == ['api', 'fleet', 'jobs']:
                 result = self.fleet.job_action(parts[3], data)
             elif parts == ['api', 'fleet', 'settings']:
