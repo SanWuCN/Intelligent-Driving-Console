@@ -19,3 +19,59 @@
 @media(max-width:1100px){.fleet-brand strong{font-size:13px}.fleet-top h1{font-size:22px}.fleet-top>span{display:none}.fleet-layout{grid-template-columns:170px minmax(0,1fr)}.fleet-layout main{padding:22px 20px}.fleet-page-heading{align-items:flex-start;flex-wrap:wrap}.fleet-job-row{grid-template-columns:130px minmax(0,1fr)}.fleet-row-actions{grid-column:1/-1;flex-direction:row;justify-content:flex-end}.fleet-stats>div{padding:15px;gap:10px}.fleet-stats svg{width:23px}.fleet-progress li{font-size:10px}}
 @media(max-width:700px){.fleet-top{padding:10px 14px;gap:12px;min-height:64px}.fleet-brand img{width:38px;height:38px}.fleet-brand strong{display:none}.fleet-top h1{font-size:20px}.fleet-layout{display:flex;flex-direction:column}.fleet-layout nav{flex-direction:row;gap:4px;padding:6px;border-right:0;border-bottom:1px solid #dae4ef;overflow-x:auto;flex-shrink:0}.fleet-layout nav button{font-size:12px;min-height:44px;padding:7px 9px;gap:5px;white-space:nowrap;flex:1}.fleet-layout nav button.active{border-left:0;border-bottom:2px solid #1464c4}.fleet-nav-bottom{display:none}.fleet-layout main{padding:20px 14px}.fleet-page-heading h2{font-size:24px}.fleet-page-heading .fleet-toolbar{width:100%;gap:8px}.fleet-search{flex:1;min-width:120px}.fleet-search input{width:100%!important}.fleet-page-heading .fleet-toolbar>.primary{padding:8px 10px}.fleet-stats{grid-template-columns:repeat(2,minmax(0,1fr))}.fleet-stats>div{padding:14px;border-bottom:1px solid #e2e8f1}.fleet-stats strong{font-size:23px}.fleet-toolbar{gap:8px}.fleet-list-toolbar>.fleet-toolbar{width:100%}.fleet-grid{grid-template-columns:repeat(auto-fill,minmax(250px,1fr))}.fleet-car-image{height:240px}.fleet-footer{padding:9px 12px;font-size:10px;flex-wrap:wrap}.fleet-footer>span:last-child{margin-left:auto}.fleet-step-banner{grid-template-columns:repeat(3,1fr);row-gap:20px}.fleet-step-banner strong{font-size:12px}.fleet-job-title{flex-wrap:wrap}.fleet-job-row{display:flex;flex-direction:column;gap:14px}.fleet-row-actions{justify-content:flex-start}.fleet-progress li{font-size:10px}.fleet-settings>label{grid-template-columns:minmax(0,1fr) 110px;font-size:13px}.fleet-setting-row{gap:15px;font-size:12px}.fleet-setting-row strong{font-size:12px}.fleet-launch{gap:12px;font-size:12px}.fleet-dialog{padding:18px}.fleet-dialog h2{font-size:17px}.fleet-screen-meta{flex-wrap:wrap}.fleet-dialog .screen-status{font-size:11px}.fleet-dialog .screen-inputs{display:none}}
 @media(prefers-reduced-motion:reduce){.fleet-shell *,.fleet-dialog *{transition:none!important}}
+
+/* ---- task ledger, batch + history additions (2026-09-17) ---- */
+.fleet-spin {animation:fleet-spin 1s linear infinite}
+@keyframes fleet-spin {to {transform:rotate(360deg)}}
+.fleet-job-title {flex-wrap:wrap;row-gap:9px}
+.fleet-job-summary {display:flex;align-items:center;gap:7px;flex-wrap:wrap;margin-left:auto}
+.fleet-job-meta {display:flex;align-items:center;gap:14px;color:#708297}
+.fleet-job-meta button {min-height:30px;padding:3px 9px;font-size:12px}
+.fleet-chip {display:inline-flex;align-items:center;gap:5px;font-size:12px;font-weight:600;padding:3px 8px;border-radius:11px;background:#eef3f9;color:#546b83;white-space:nowrap}
+.fleet-chip svg {width:13px;height:13px}
+.fleet-chip.ok {background:#e8f7ed;color:#157a3d}
+.fleet-chip.failed {background:#fff0ee;color:#b62d28}
+.fleet-chip.cancelled {background:#edf0f4;color:#677485}
+.fleet-chip.waiting {background:#fff4d9;color:#8a5c06}
+.fleet-chip.running {background:#e8f1ff;color:#125fb9}
+.fleet-chip.skipped {background:#eef1f5;color:#6b7c8f}
+.fleet-chip.ghost {background:transparent;color:#708297;font-weight:500}
+.fleet-row-meta {display:grid;grid-template-columns:1fr;gap:5px;margin:9px 0 0;font-size:11px}
+.fleet-row-meta div {display:flex;justify-content:space-between;gap:8px}
+.fleet-row-meta dt {color:#8095a9}
+.fleet-row-meta dd {margin:0;color:#3d5876;font-variant-numeric:tabular-nums;max-width:96px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.fleet-progress li.failed {color:#b62d28;font-weight:600}
+.fleet-progress li.failed>span {background:#fde3e1;color:#b62d28}
+.fleet-progress li.skipped {color:#7b8b9d}
+.fleet-progress li.skipped>span {background:#eef1f5;color:#8b9aab}
+.fleet-progress li.cancelled {color:#8a95a3}
+.fleet-progress li.cancelled>span {background:#eceff3;color:#98a4b2}
+.fleet-progress li>span svg {width:12px;height:12px}
+.fleet-waiting {display:flex;align-items:center;gap:7px;font-size:12px;color:#8a5c06;background:#fff8e6;border:1px solid #f0dca6;border-radius:4px;padding:7px 10px;margin:12px 0 0}
+.fleet-waiting svg {width:14px;height:14px}
+.fleet-ledger {margin-top:14px}
+.fleet-ledger>table {width:100%;border-collapse:collapse;font-size:12px;background:#fbfcfe;border:1px solid #e2e9f1;border-radius:5px;overflow:hidden}
+.fleet-shell .fleet-ledger th {background:#eef3f9;padding:7px 10px;font-size:11px}
+.fleet-shell .fleet-ledger td {border-bottom:1px solid #edf1f6;padding:7px 10px;min-width:0;vertical-align:top}
+.fleet-shell .fleet-ledger tr:last-child td {border-bottom:0}
+.fleet-shell .fleet-ledger tr.failed td {background:#fff7f6}
+.fleet-shell .fleet-ledger tr.running td {background:#f6faff}
+.fleet-ledger-stage {font-variant-numeric:tabular-nums;color:#5d7690}
+.fleet-ledger-empty {color:#8095a9;text-align:center}
+.fleet-timeline {margin-top:10px;font-size:12px;color:#5f7690}
+.fleet-timeline summary {cursor:pointer;color:#4b6a8c}
+.fleet-timeline ol {list-style:none;margin:9px 0 0;padding:0;display:flex;flex-direction:column;gap:5px;max-height:230px;overflow:auto}
+.fleet-progress .fleet-timeline li {display:flex;flex-direction:row;gap:9px;align-items:baseline;text-align:left;font-size:12px;color:#5f7690;padding:5px 8px;background:#fafbfd;border-left:2px solid #dbe4ee}
+.fleet-timeline time {color:#8296aa;font-variant-numeric:tabular-nums;flex-shrink:0;width:62px}
+/* the step rail styles `.fleet-progress li>span` as a 23px circle; undo that for event text */
+.fleet-progress .fleet-timeline li>span {display:inline;width:auto;height:auto;background:none;color:#5f7690;font-size:12px;border-radius:0;overflow-wrap:anywhere}
+.fleet-timeline b {color:#4b6a8c;flex-shrink:0;font-weight:600}
+.fleet-day {margin:0 0 14px}
+.fleet-day>summary {display:flex;align-items:center;gap:9px;cursor:pointer;padding:10px 0;font-size:15px;font-weight:600;color:#2b4562;border-bottom:1px solid #d4dfeb}
+.fleet-day>summary svg {transition:transform .15s}
+.fleet-day:not([open])>summary svg {transform:rotate(-90deg)}
+.fleet-day>summary span {margin-left:auto;font-size:12px;font-weight:400;color:#708297}
+.fleet-history-toolbar {justify-content:flex-start;margin-bottom:20px;flex-wrap:wrap}
+.fleet-inline {display:flex;align-items:center;gap:8px;color:#5f7690}
+.fleet-count {color:#708297;font-size:12px;margin-right:auto}
+.fleet-dialog code {background:#eef3f9;border-radius:3px;padding:1px 5px;font-size:12px}
