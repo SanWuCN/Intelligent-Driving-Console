@@ -429,6 +429,7 @@ class BigCarController:
         self._live_tickets: Dict[str, float] = {}
         self._applied_speed_cache: Optional[Tuple[float, float]] = None
         self._battery_cache: Optional[Tuple[float, Dict[str, Any]]] = None
+        self._guard_cache = (0.0, {})
         self._probe_lock = threading.RLock()
         self._speed_pending: Optional[Dict[str, Any]] = None
         self._speed_wake = threading.Event()
@@ -597,6 +598,7 @@ class BigCarController:
             section = None
             nodes, topics, live = set(), set(), set()
             battery: Dict[str, Any] = {}
+            guard = {}
             for raw in result.stdout.splitlines():
                 line = raw.strip()
                 if line == "__NODES__":
@@ -607,6 +609,12 @@ class BigCarController:
                     section = "live"
                 elif line == "__BATTERY__":
                     section = "battery"
+                elif line == "__GUARD__":
+                    section = "guard"
+                elif section == "guard":
+                    value = json.loads(line)
+                    if isinstance(value, dict):
+                        guard = value
                 elif section == "nodes" and line.startswith("/"):
                     nodes.add(line)
                 elif section == "topics" and line.startswith("/"):
@@ -622,10 +630,11 @@ class BigCarController:
             completed_at = time.monotonic()
             self._ros_cache = (completed_at, nodes, topics)
             self._live_cache = (completed_at, live)
+            self._guard_cache = (completed_at, guard)
             if battery:
                 self._battery_cache = (completed_at, self._normalise_battery(battery))
             return nodes, topics
-        except (OSError, subprocess.TimeoutExpired):
+        except (OSError, ValueError, subprocess.TimeoutExpired):
             completed_at = time.monotonic()
             if not force and completed_at - cached_at < 15.0:
                 # Only display polls may retain a recent successful sample.
@@ -1021,6 +1030,14 @@ class BigCarController:
         nodes, topics = self._ros_snapshot()
         live_topics = self._live_topics()
         stage = self._stage(nodes, live_topics)
+        guard_at, guard = self._guard_cache
+        guarded = self.config.get("person_guard_enabled") is True
+        guard_ready = bool(guard) and time.monotonic() - guard_at < 8.0
+        guard_armed = guard_ready and guard.get("armed") is True
+        guard_detail = ("人体停车门控未使能，请重新点击开始循迹" if guard_ready
+                        else "人体停车门控状态不可用，禁止判定为运行中")
+        if guarded and not guard_armed:
+            stage = min(stage, 5)
         container_ok = self._container_running()
         map_ok = "/points_map" in topics or self._contains(nodes, "points_map_loader")
         pose_ok = "/current_pose" in live_topics
@@ -1058,14 +1075,10 @@ class BigCarController:
                 else "请先完成地图标定",
             ),
         ]
-        titles = [
-            ("环境检查", "系统环境、硬件连接、资源检查"),
-            ("底盘与雷达", "CAN 通信、底盘状态、Hesai 雷达"),
-            ("Autoware", "启动 TF、车辆模型与点云滤波"),
-            ("地图与标定", "加载点云地图、NDT 定位初始化"),
-            ("路径配置", "加载 CSV 航迹并启动规划节点"),
-            ("循迹运行", "启动控制链路，进入循迹模式"),
-        ]
+        # 只留标题：步骤说明文案由前端决定是否显示（现在一律不显示）。
+        titles = ["环境检查", "底盘与雷达", "Autoware", "地图与标定", "路径配置", "自主巡航"]
+        if guarded and not guard_armed:
+            modules[-1].update(state="warn", detail=guard_detail)
         with self._lock:
             busy = self._busy
             logs = list(self._logs)
@@ -1073,30 +1086,32 @@ class BigCarController:
             emergency = self._emergency
         workflow = []
         action_labels = ["重新检查环境", "启动底盘与雷达", "打开 Autoware 与终端", "打开 RViz 并开始标定", "加载路径与规划", "开始循迹"]
-        for index, (title, description) in enumerate(titles, 1):
+        for index, title in enumerate(titles, 1):
             if index <= stage:
-                state, detail = "done", "状态检查通过"
+                state, detail = "done", "已完成"
             elif index == stage + 1:
-                state, detail = ("running", f"正在执行：{busy}") if busy else ("current", "可以启动此步骤")
+                state, detail = ("running", f"正在执行：{busy}") if busy else ("current", "可以启动")
             else:
-                state, detail = "waiting", "需先完成上一步"
+                state, detail = "waiting", "等待上一步"
             if emergency and index == 6:
-                state, detail = "blocked", "已触发紧急停止，重新检查后方可运行"
+                state, detail = "blocked", "已急停"
             if index == 2 and lidar_node and "/points_raw" not in live_topics:
-                state, detail = "current", "雷达驱动已启动，但 /points_raw 暂无实时点云"
+                state, detail = "current", "/points_raw 暂无点云"
             if index == 4 and ndt_nodes and not pose_ok:
-                state, detail = "current", "请在 RViz 使用 2D Pose Estimate 设置车辆位置和朝向"
+                state, detail = "current", "请在 RViz 设置 2D Pose"
             if index == 4 and localization_bootstrap and not pose_ok:
-                state, detail = "current", "地图与实时雷达已显示，请使用 2D Pose Estimate 完成人工标定"
+                state, detail = "current", "请在 RViz 设置 2D Pose"
             if index == 5 and planning_nodes and not route_ok:
-                state, detail = "current", "规划节点已启动，但 /final_waypoints 暂无实时数据"
+                state, detail = "current", "等待 /final_waypoints"
             if index == 6 and control_nodes and not control_output:
-                state, detail = "current", "控制节点已启动，但 /ctrl_cmd 没有实时输出"
+                state, detail = "current", "等待 /ctrl_cmd"
             if index == 2 and chassis_node and not chassis_feedback:
-                state, detail = "current", "底盘无实时反馈，请检查进程和 CAN 通信"
+                state, detail = "current", "底盘无实时反馈"
             if index == 6 and control_output and not chassis_feedback:
-                state, detail = "blocked", "底盘无实时反馈，不能判定为循迹运行"
-            workflow.append({"id": index, "title": title, "description": description, "state": state, "detail": detail, "action_label": action_labels[index - 1]})
+                state, detail = "blocked", "底盘无实时反馈"
+            if index == 6 and guarded and not guard_armed and not emergency:
+                state, detail = "current", guard_detail
+            workflow.append({"id": index, "title": title, "description": "", "state": state, "detail": detail, "action_label": action_labels[index - 1]})
         cpu = psutil.cpu_percent(interval=None) if psutil else None
         memory = psutil.virtual_memory().percent if psutil else None
         return {
@@ -1105,6 +1120,7 @@ class BigCarController:
             "connected": container_ok,
             "container": self.container,
             "current_stage": stage,
+            "person_guard": {"enabled": guarded, "fresh": guard_ready, "control": guard},
             "busy": busy,
             "emergency": emergency,
             "rviz_running": rviz_running,
@@ -1235,20 +1251,24 @@ class BigCarController:
         command = (
             "container_pid=$(docker inspect -f '{{.State.Pid}}' " + shlex.quote(self.container) + "); "
             "test -n \"$container_pid\" -a \"$container_pid\" != 0 || exit 1; "
-            "nohup nsenter --target \"$container_pid\" --mount --uts --net --pid bash -lc "
+            "exec nsenter --target \"$container_pid\" --mount --uts --net --pid bash -lc "
             + shlex.quote(
                 f"source /opt/ros/melodic/setup.bash; source /root/autoware_1.14.0/install/setup.bash; "
                 f"export DISPLAY={shlex.quote(display)} XAUTHORITY={shlex.quote(xauth)}; "
                 f"echo $$ > {shlex.quote(pid_file)}; "
                 "exec rosrun rviz rviz -d $(rospack find autoware_quickstart_examples)/launch/rosbag_demo/default.rviz"
             )
-            + f" >> {shlex.quote(log_file)} 2>&1 </dev/null &"
+            + f" >> {shlex.quote(log_file)} 2>&1 </dev/null"
         )
-        result = self._run(["bash", "-lc", command], timeout=10)
+        unit = "bigcar-rviz-" + str(int(time.time() * 1000000))
+        result = self._run(["systemd-run", "--unit=" + unit, "--collect", "bash", "-lc", command], timeout=10)
         if result.returncode != 0:
             raise ControllerError(f"rviz 启动失败：{result.stdout.strip()}")
-        self.log("INFO", "rviz", "已使用宿主机 IPC 启动 RViz，工具栏和面板可正常显示")
         time.sleep(0.5)
+        running = self._run(["systemctl", "is-active", unit], timeout=4)
+        if running.returncode != 0:
+            raise ControllerError("RViz 独立服务启动后退出，请检查 rviz.log 和 systemd 日志")
+        self.log("INFO", "rviz", "RViz 已通过独立服务启动，控制台重启不会关闭窗口")
 
     def _launch_stage(self, action: str, data: Dict[str, Any]) -> None:
         if action == "environment_check":
@@ -1368,8 +1388,7 @@ class BigCarController:
             if guarded:
                 armed = self._ros("rosservice call /person_guard/arm 'data: true'", timeout=5)
                 if armed.returncode != 0 or "success: True" not in armed.stdout:
-                    self._emergency_stop()
-                    raise ControllerError("人体相机数据未就绪，已停止循迹启动")
+                    raise ControllerError("人体停车门控拒绝启动：" + armed.stdout.strip())
             with self._lock:
                 self._emergency = False
             self.log("WARN", "safety", "循迹控制已启动，请保持物理急停可用")

@@ -1,5 +1,5 @@
 import { AlertTriangle, BatteryCharging, KeyRound, LockKeyhole, Radio, Square, UserRound } from 'lucide-react'
-import { useCallback, useEffect, useMemo, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { getToken, postJSON, setToken } from './api'
 import { RestartDialog, SafetyDialog, UnlockDialog } from './components/Dialogs'
 import { LiveMap } from './components/LiveMap'
@@ -78,11 +78,84 @@ function App() {
   const requireUnlock = useCallback(() => setDialog('unlock'), [])
 
   const nextStage = Math.min(state?.current_stage ?? 0, 5)
-  const nextLabel = ACTION_LABELS[nextStage]
   const fileBlocked = nextStage === 3 ? !selectedMap : nextStage >= 4 ? !selectedMap || !selectedRoute : false
   const busy = Boolean(state?.busy)
   const connectionOnline = Boolean(state?.connected) && !connectionError
   const isRunning = (state?.current_stage ?? 0) >= 6 && !state?.emergency
+
+  // ------------------------------------------------------------ 一键启动
+  // 自动一个接一个跑完六步；第 4 步的 RViz 人工标定和第 6 步的安全确认仍然要人点。
+  const [auto, setAuto] = useState<{ stage: number; awaiting?: 'localized' } | null>(null)
+  // 记住「为哪个阶段发过动作」，防止 1.8 秒轮询刷新时重复下发同一条命令。
+  const autoSent = useRef<number | null>(null)
+  const cancelAuto = useCallback((message?: string) => {
+    setAuto(null)
+    autoSent.current = null
+    if (message) setToast({ text: message, error: true })
+  }, [])
+
+  /** 第 4 步等的是「/current_pose 已经实时输出」，也就是人工标定做完了。 */
+  useEffect(() => {
+    if (!auto || auto.awaiting !== 'localized') return
+    if (!state?.live_topics.includes('/current_pose')) return
+    if (!unlocked) { setDialog('unlock'); return }
+    if (autoSent.current === 4) return
+    autoSent.current = 4
+    setAuto({ stage: 4 })
+    setToast({ text: '标定已完成，正在加载路径与规划' })
+    void action('load_route')
+  }, [action, auto, state, unlocked])
+
+  useEffect(() => {
+    if (!auto || auto.awaiting || !state) return
+    const stage = state.current_stage
+    if (stage <= auto.stage) {
+      if (stage < auto.stage && state.last_error) cancelAuto(`一键启动已停止：${state.last_error}`)
+      else if (state.emergency) cancelAuto('一键启动已停止：车辆处于急停状态')
+      return
+    }
+    // 刚跑完的那一步推进成功了，继续下一步。
+    if (stage >= 6) {
+      setAuto(null)
+      autoSent.current = null
+      setToast({ text: '六步流程完成，已进入自主巡航' })
+      return
+    }
+    if (stage === 3) {
+      if (autoSent.current === 3) return
+      autoSent.current = 3
+      setAuto({ stage: 3 })
+      void action('start_localization')
+      return
+    }
+    if (stage === 4) {
+      // 人工标定：RViz 由人来点 2D Pose Estimate，标定好之后自动继续。
+      setAuto({ stage: 4, awaiting: 'localized' })
+      autoSent.current = null
+      setToast({ text: '请在 RViz 用 2D Pose Estimate 完成人工标定，完成后自动继续' })
+      return
+    }
+    if (autoSent.current === stage) return
+    autoSent.current = stage
+    setAuto({ stage })
+    if (stage === 5) setDialog('safety')
+    else void action(ACTIONS[stage])
+  }, [action, auto, cancelAuto, state])
+
+  const startAuto = useCallback(() => {
+    if (!unlocked) { setDialog('unlock'); return }
+    if (!connectionOnline) { setToast({ text: '车端未连接，无法一键启动', error: true }); return }
+    const stage = Math.min(state?.current_stage ?? 1, 5)
+    if (stage === 3 && !selectedMap) { setToast({ text: '请先选择地图文件', error: true }); return }
+    if (stage >= 4 && (!selectedMap || !selectedRoute)) { setToast({ text: '请先选择地图与路径文件', error: true }); return }
+    autoSent.current = null
+    // 只剩第 6 步的安全确认时，直接弹窗让人确认后开始巡航。
+    if (stage >= 5) { setAuto({ stage: 5 }); setDialog('safety'); return }
+    setAuto({ stage })
+    void action(ACTIONS[stage])
+  }, [action, connectionOnline, selectedMap, selectedRoute, state, unlocked])
+
+  const autoProgress = auto ? `自动执行中 · 第 ${Math.min((state?.current_stage ?? 0) + 1, 6)}/6 步` : ''
 
   const metrics = useMemo(() => {
     if (!state) return []
@@ -131,6 +204,7 @@ function App() {
         <Workflow
           steps={state.workflow}
           busy={busy}
+          compact
           onStart={runStep}
           onRestart={() => {
             if (!unlocked) { setDialog('unlock'); return }
@@ -153,8 +227,12 @@ function App() {
           selectedMap={selectedMap}
           selectedRoute={selectedRoute}
           busy={busy}
-          nextLabel={isRunning ? '循迹运行中' : nextLabel}
-          nextDisabled={fileBlocked || isRunning || !connectionOnline}
+          nextLabel={isRunning ? '巡航运行中' : ACTION_LABELS[Math.min(nextStage + 1, 5)]}
+          nextDisabled={fileBlocked || isRunning}
+          autoRunning={Boolean(auto)}
+          autoProgress={autoProgress}
+          onAutoStart={startAuto}
+          onAutoCancel={() => cancelAuto('已停止自动执行，当前步骤未受影响')}
           parameters={parameters || state.parameters}
           parameterDirty={parameterDirty}
           speed={state.speed}
@@ -195,7 +273,7 @@ function App() {
       </footer>
 
       {dialog === 'unlock' ? <UnlockDialog onClose={() => setDialog(null)} onUnlock={(token) => { setToken(token); setUnlocked(true); setDialog(null); setToast({ text: '控制令牌已保存，将在首次操作时验证' }) }} /> : null}
-      {dialog === 'safety' ? <SafetyDialog onClose={() => setDialog(null)} onConfirm={() => { setDialog(null); void action('start_tracking', { safety_confirmed: true }) }} /> : null}
+      {dialog === 'safety' ? <SafetyDialog onClose={() => { setDialog(null); setAuto(null) }} onConfirm={() => { setDialog(null); void action('start_tracking', { safety_confirmed: true }) }} /> : null}
       {dialog === 'restart' ? <RestartDialog onClose={() => setDialog(null)} onConfirm={() => { setDialog(null); void action('restart_workflow') }} /> : null}
       {toast ? <div className={`toast ${toast.error ? 'error' : ''}`} role="status"><span>{toast.error ? <AlertTriangle aria-hidden="true" /> : <Square aria-hidden="true" fill="currentColor" />}{toast.text}</span><button aria-label="关闭提示" onClick={() => setToast(null)}>×</button></div> : null}
     </div>

@@ -96,6 +96,18 @@ button:focus-visible, input:focus-visible, select:focus-visible { outline: 3px s
 .workflow-restart:disabled { opacity: .45; cursor: not-allowed; }
 .workflow-restart svg { width: 15px; height: 15px; }
 .workflow-list { height: calc(100% - 71px); margin: 0; padding: 8px 0 14px; list-style: none; overflow: auto; }
+/* 精简模式：只留「第几步 + 名称 + 状态」，六步正好铺满左侧面板 */
+.workflow-panel.compact .workflow-list { height: calc(100% - 55px); padding: 0; display: flex; flex-direction: column; }
+.workflow-panel.compact .workflow-step { flex: 1 1 0; min-height: 0; padding: 4px 10px 4px 52px; display: flex; flex-direction: column; justify-content: center; }
+.workflow-panel.compact .workflow-step.current,
+.workflow-panel.compact .workflow-step.running { margin: 0 6px; padding-left: 46px; }
+.workflow-panel.compact .step-icon { top: 50%; transform: translateY(-50%); left: 12px; }
+.workflow-panel.compact .step-content small { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+/* 静态状态（已完成 / 等待上一步）不再重复显示，只保留需要动手或有异常时的提示 */
+.workflow-panel.compact .workflow-step.done .step-content small,
+.workflow-panel.compact .workflow-step.waiting .step-content small { display: none; }
+.workflow-panel.compact .step-action { display: none; }
+.workflow-panel.compact .workflow-heading { min-height: 55px; }
 .workflow-step { position: relative; min-height: 72px; padding: 9px 12px 9px 56px; }
 .workflow-step.current, .workflow-step.running { margin: 0 7px; padding-left: 49px; border-radius: 5px; background: var(--blue-soft); }
 .step-rail { position: absolute; left: 27px; top: 0; bottom: 0; width: 2px; background: #d9e2ec; }
@@ -253,10 +265,21 @@ button:focus-visible, input:focus-visible, select:focus-visible { outline: 3px s
 .parameter-save svg { width: 14px; height: 14px; }
 /* 1366×768 上面板内容高于可视区：主按钮钉在底部，「开始循迹」永远点得到。 */
 .file-panel .primary-action { position: sticky; bottom: 0; z-index: 2; }
+/* 与左侧流程面板底边对齐：去掉底部留白 */
+.file-panel .primary-action, .file-panel .primary-row { margin-bottom: 0; }
 .primary-action { width: calc(100% - 20px); min-height: 48px; margin: 11px 10px 0; display: flex; align-items: center; justify-content: center; gap: 9px; color: #fff; background: #1477d8; border: 0; border-radius: 5px; font-size: 16px; font-weight: 700; box-shadow: 0 3px 8px rgba(20,91,184,.22); }
 .primary-action:hover { background: var(--blue-strong); }
 .primary-action:disabled { color: #8b9bad; background: #dfe7ef; box-shadow: none; }
 .primary-action svg { width: 19px; height: 19px; }
+/* 自动执行中：主按钮旁边给一个停止入口 */
+.primary-row { display: grid; grid-template-columns: 1fr auto; gap: 6px; align-items: stretch; }
+.primary-row .primary-action { width: auto; margin-right: 0; }
+.auto-cancel { min-height: 48px; padding: 0 12px; color: #b35c00; background: #fff6e9; border: 1px solid #eccb9a; border-radius: 5px; font-size: 12px; font-weight: 650; white-space: nowrap; }
+.auto-cancel:hover { background: #ffeed6; }
+.auto-hint { margin: 7px 10px 0; display: flex; align-items: flex-start; gap: 5px; color: #60758c; font-size: 10px; line-height: 1.4; }
+.auto-hint svg { width: 13px; height: 13px; flex: 0 0 auto; margin-top: 1px; }
+.auto-hint.on { color: #14734a; }
+.auto-hint.on svg { color: var(--green); }
 .operation-note { margin: 8px 10px 0; padding: 8px; display: flex; gap: 7px; color: #60758c; background: #edf6ff; border: 1px solid #d7eaff; border-radius: 5px; font-size: 10px; line-height: 1.35; }
 .operation-note svg { width: 16px; height: 16px; flex: 0 0 auto; color: #1477d8; }
 

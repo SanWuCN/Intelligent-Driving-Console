@@ -4,6 +4,8 @@ import type { WorkflowStep } from '../types'
 interface Props {
   steps: WorkflowStep[]
   busy: boolean
+  /** 与右下角「一键启动」按钮底部对齐：收紧行距、隐藏细节，只留步骤与状态。 */
+  compact?: boolean
   onStart: (step: WorkflowStep) => void
   onRestart: () => void
 }
@@ -15,14 +17,11 @@ function StepIcon({ step }: { step: WorkflowStep }) {
   return <Circle aria-hidden="true" />
 }
 
-export function Workflow({ steps, busy, onStart, onRestart }: Props) {
+export function Workflow({ steps, busy, compact = false, onStart, onRestart }: Props) {
   return (
-    <section className="panel workflow-panel" aria-labelledby="workflow-title">
+    <section className={`panel workflow-panel ${compact ? 'compact' : ''}`} aria-labelledby="workflow-title">
       <header className="panel-title workflow-heading">
-        <div>
-          <h2 id="workflow-title">启动流程</h2>
-          <p>按顺序完成以下步骤，启动自动驾驶系统</p>
-        </div>
+        <h2 id="workflow-title">启动流程</h2>
         <button className="workflow-restart" disabled={busy} onClick={onRestart}>
           <RotateCcw aria-hidden="true" />重启流程
         </button>
@@ -37,9 +36,8 @@ export function Workflow({ steps, busy, onStart, onRestart }: Props) {
                 <strong><span>{step.id}</span>{step.title}</strong>
                 <em>{step.state === 'done' ? '已完成' : step.state === 'running' ? '运行中' : step.state === 'current' ? '待启动' : step.state === 'blocked' ? '已阻止' : '等待中'}</em>
               </div>
-              <p>{step.description}</p>
-              <small>{step.detail}</small>
-              {step.state === 'current' ? (
+              <small title={step.detail}>{step.detail}</small>
+              {step.state === 'current' && !compact ? (
                 <button className="step-action" disabled={busy} onClick={() => onStart(step)}>
                   {step.action_label}
                 </button>

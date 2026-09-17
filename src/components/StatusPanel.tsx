@@ -25,6 +25,11 @@ interface Props {
   onParameterChange: (name: keyof RuntimeParameters, value: number | boolean) => void
   onApplyParameters: () => void
   onSpeedChange: (value: number) => void
+  /** 一键启动：自动串起六步流程。 */
+  autoRunning: boolean
+  autoProgress: string
+  onAutoStart: () => void
+  onAutoCancel: () => void
 }
 
 const stateLabel: Record<ModuleState['state'], string> = {
@@ -148,11 +153,25 @@ export function StatusPanel(props: Props) {
           </button>
         </div>
 
-        <button className="primary-action" disabled={props.nextDisabled || props.busy} onClick={props.onNext}>
-          {props.busy ? <LoaderCircle className="spin" aria-hidden="true" /> : <Play aria-hidden="true" fill="currentColor" />}
-          {props.busy ? '正在执行…' : props.nextLabel}
-        </button>
-        <div className="operation-note"><ShieldAlert aria-hidden="true" /><span>请按左侧流程依次完成前置步骤；实车运行前必须确认物理急停可用。</span></div>
+        {props.autoRunning ? (
+          <div className="primary-row">
+            <button className="primary-action" disabled={props.busy || props.nextDisabled} onClick={props.onNext}>
+              {props.busy ? <LoaderCircle className="spin" aria-hidden="true" /> : <Play aria-hidden="true" fill="currentColor" />}
+              {props.busy ? '正在执行…' : props.nextLabel}
+            </button>
+            <button className="auto-cancel" onClick={props.onAutoCancel}>停止自动</button>
+          </div>
+        ) : (
+          <button className="primary-action" disabled={props.busy || props.nextDisabled} onClick={props.onAutoStart}>
+            <Play aria-hidden="true" fill="currentColor" />一键启动
+          </button>
+        )}
+        <p className={`auto-hint ${props.autoRunning ? 'on' : ''}`}>
+          {props.autoRunning ? <Zap aria-hidden="true" /> : <ShieldAlert aria-hidden="true" />}
+          {props.autoRunning
+            ? `${props.autoProgress}，需要人工标定和安全确认时会在左下角弹窗`
+            : '自动依次完成六步；人工标定与安全确认仍需你确认'}
+        </p>
       </section>
     </aside>
   )
