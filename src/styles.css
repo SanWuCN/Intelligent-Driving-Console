@@ -191,8 +191,17 @@ button:focus-visible, input:focus-visible, select:focus-visible { outline: 3px s
 .screen-status button { min-height: 30px; padding: 0 9px; display: inline-flex; align-items: center; gap: 5px; color: #fff; background: #1477d8; border: 0; border-radius: 4px; pointer-events: auto; }.screen-status button svg { width: 13px; height: 13px; }
 .rviz-context { position: absolute; z-index: 2; top: 10px; left: 10px; padding: 7px 9px; color: #d7e4f2; background: rgba(8,19,31,.84); border: 1px solid #344b64; border-radius: 4px; font-size: 10px; pointer-events: none; }
 
-.status-column { min-width: 0; min-height: 0; display: flex; flex-direction: column; gap: 10px; overflow: hidden; }
-.status-panel { flex: 0 1 43%; min-height: 205px; overflow: hidden; }
+.status-column { min-width: 0; min-height: 0; display: grid; grid-template-rows: minmax(0, auto) minmax(0, 1fr);
+  align-content: stretch; gap: 10px; overflow: hidden; }
+/* 状态面板按内容占高（上限是整列），放不下时模块表内部滚动，绝不裁行。 */
+/* 默认不设上限：6 个模块优先全部显示，放不下时模块表内部滚动。
+   只有屏幕够高（>820px）时才给状态面板设上限，免得把下面的参数面板挤成一直滚。 */
+.status-panel { min-height: 0; display: flex; flex-direction: column; overflow: hidden; }
+/* 表格放不下就内部滚动：1366×768 上有 6 个模块，硬裁会把最后两行藏掉 */
+.status-panel .module-table { flex: 1 1 auto; min-height: 0; overflow-y: auto; overscroll-behavior: contain;
+  scrollbar-width: thin; scrollbar-color: #c3d2e2 transparent; }
+.status-panel .module-table::-webkit-scrollbar { width: 6px; }
+.status-panel .module-table::-webkit-scrollbar-thumb { background: #c3d2e2; border-radius: 3px; }
 .module-table { padding: 5px 9px 9px; }
 .module-row { min-height: 43px; display: grid; grid-template-columns: minmax(92px, 1fr) 74px minmax(94px, 1.2fr); align-items: center; border-bottom: 1px solid #e1e8f0; font-size: 12px; }
 .module-row.table-head { min-height: 32px; color: #63778e; background: #f0f4f8; border: 1px solid #dae4ee; font-weight: 650; }
@@ -205,7 +214,7 @@ button:focus-visible, input:focus-visible, select:focus-visible { outline: 3px s
 .module-state.warn { color: var(--amber); }.module-state.warn i { background: #f0a900; }
 .module-state.error { color: var(--red); }.module-state.error i { background: var(--red); }
 .module-state.running { color: #1679d8; }.module-state.running i { background: #1679d8; }
-.file-panel { flex: 1 1 57%; min-height: 0; padding-bottom: 8px; overflow-y: auto; }
+.file-panel { min-height: 0; padding-bottom: 8px; overflow-y: auto; }
 .file-panel .compact-title > small { color: #8091a4; font-size: 9px; font-weight: 500; }
 .file-select { min-height: 46px; margin: 0 10px; display: grid; grid-template-columns: 22px 64px minmax(0, 1fr) 20px; align-items: center; gap: 7px; color: #274360; border-bottom: 1px solid #e3eaf2; font-size: 12px; font-weight: 600; }
 .file-select svg { width: 18px; height: 18px; color: #31577e; }
@@ -312,6 +321,23 @@ button:focus-visible, input:focus-visible, select:focus-visible { outline: 3px s
   .workflow-step { min-height: 68px; }
 }
 
+/* 窄一点但不算矮的窗口：状态面板给上限，参数面板用紧凑排布，两边都不用滚。 */
+@media (max-width: 1500px) and (min-height: 821px) {
+  .status-panel { max-height: 58%; }
+  .module-row { min-height: 34px; }
+  .module-row.table-head { min-height: 26px; }
+  .file-select { min-height: 42px; }
+  .file-select select { min-height: 32px; }
+  .speed-card { margin-top: 7px; }
+  .speed-head output { font-size: 19px; }
+  .speed-presets button { min-height: 29px; }
+  .speed-note { display: none; }
+  .parameter-foot { margin-top: 6px; }
+  .loop-toggle { min-height: 36px; }
+  .file-panel .operation-note { display: none; }
+  .primary-action { min-height: 44px; margin-top: 8px; }
+}
+
 @media (min-width: 1181px) and (max-height: 820px) {
   .topbar { min-height: 62px; padding-top: 5px; padding-bottom: 5px; }
   .brand-block img { width: 46px; height: 46px; }
@@ -332,9 +358,11 @@ button:focus-visible, input:focus-visible, select:focus-visible { outline: 3px s
   .map-stage { height: calc(100% - 46px); min-height: 0; }
   .status-column { gap: 8px; overflow: hidden; }
   .compact-title { min-height: 40px; }
-  .module-table { padding-top: 3px; padding-bottom: 4px; }
+  .module-table { padding-top: 3px; padding-bottom: 4px; overflow-y: auto; }
   .module-row { min-height: 29px; }
-  .module-row.table-head { min-height: 24px; }
+  .module-row.table-head { min-height: 22px; }
+  .module-row { min-height: 26px; font-size: 11px; }
+  .module-row strong { font-size: 11px; }
   .file-panel { padding-bottom: 5px; }
   .file-select { min-height: 40px; }
   .file-select select { min-height: 30px; }
@@ -368,8 +396,13 @@ button:focus-visible, input:focus-visible, select:focus-visible { outline: 3px s
   .brand-block div { display: none; }.topbar h1 { justify-self: start; }
   .connection-state { display: none; }
   .workspace { grid-template-columns: 280px minmax(0, 1fr); grid-template-rows: minmax(520px, 1fr) auto auto; }
-  .status-column { grid-column: 1 / -1; display: grid; grid-template-columns: 1fr 1fr; }
-  .log-panel { grid-row: 3; }
+  /* 状态面板和参数面板并排。窄窗口下宁可整页滚动，也不能把面板压成一条缝。 */
+  .app-shell { overflow-y: auto; }
+  .workspace { overflow: visible; }
+  .status-column { grid-column: 1 / -1; grid-template-columns: 1fr 1fr; grid-template-rows: auto auto; }
+  .status-panel { min-height: 300px; max-height: 340px; }
+  .file-panel { min-height: 380px; max-height: 460px; }
+  .log-panel { grid-row: 3; min-height: 220px; }
 }
 
 @media (min-width: 761px) and (max-width: 900px) {
