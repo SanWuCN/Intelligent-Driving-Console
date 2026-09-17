@@ -1,0 +1,10 @@
+cmake_minimum_required(VERSION 3.5)
+project(v2x_warning_test)
+set(CMAKE_CXX_STANDARD 11)
+set(CMAKE_AUTOMOC ON)
+find_package(Qt5 REQUIRED COMPONENTS Core Gui)
+find_package(OpenCV REQUIRED)
+add_executable(test_v2x_warning test_v2x_warning.cpp ../src/vu4004_v2x.cpp
+               ../src/cJSON.c ../include/vu4004_v2x.h)
+target_include_directories(test_v2x_warning PRIVATE ../include ${OpenCV_INCLUDE_DIRS})
+target_link_libraries(test_v2x_warning Qt5::Core Qt5::Gui ${OpenCV_LIBS} pthread)

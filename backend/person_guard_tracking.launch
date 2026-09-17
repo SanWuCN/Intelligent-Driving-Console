@@ -1,0 +1,6 @@
+<launch>
+  <group>
+    <remap from="/ctrl_cmd" to="/person_guard/ctrl_cmd_input" />
+    <include file="$(find twist_filter)/launch/twist_filter.launch" />
+  </group>
+</launch>

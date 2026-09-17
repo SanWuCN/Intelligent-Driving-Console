@@ -41,18 +41,32 @@ class ControllerTests(unittest.TestCase):
         with self.assertRaises(ControllerError):
             self.controller.resolve_data_file("../secret.csv", ".csv")
 
-    def test_rviz_redirects_to_host_log_and_launches_in_background(self):
+    def test_rviz_runs_in_independent_systemd_unit_with_host_log(self):
         import shlex
         import subprocess
         with patch.object(self.controller, "_ros", return_value=subprocess.CompletedProcess([], 1)), patch.object(self.controller, "_run", return_value=subprocess.CompletedProcess([], 0, stdout="")) as run, patch("controller.time.sleep"):
             self.controller._start_rviz()
-        command = run.call_args.args[0][2]
+        args = run.call_args_list[0].args[0]
+        self.assertEqual(args[0], "systemd-run")
+        self.assertTrue(args[1].startswith("--unit=bigcar-rviz-"))
+        command = args[-1]
         tokens = shlex.split(command)
         self.assertEqual(tokens[tokens.index(">>") + 1], str(self.controller.logs_dir / "rviz.log"))
-        self.assertIn("nohup", tokens)
-        self.assertEqual(tokens[-1], "&")
+        self.assertIn("nsenter", tokens)
+        self.assertNotIn("&", tokens)
         inner = tokens[tokens.index("-lc") + 1]
         self.assertIn("/from_host/bigcar-console/runtime/rviz.pid", inner)
+
+    def test_guard_disarmed_or_stale_cannot_show_tracking_running(self):
+        self.controller._sim_stage = 6
+        self.controller.config["person_guard_enabled"] = True
+        for sample in [(time.monotonic(), {"armed": False}), (0, {"armed": True})]:
+            self.controller._guard_cache = sample
+            state = self.controller.snapshot()
+            self.assertEqual(state["current_stage"], 5)
+            self.assertEqual(state["workflow"][5]["state"], "current")
+        self.controller._guard_cache = (time.monotonic(), {"armed": True})
+        self.assertEqual(self.controller.snapshot()["current_stage"], 6)
 
     def test_simulated_workflow_progresses(self):
         (self.data / "map.pcd").write_text("VERSION .7\n", encoding="utf-8")
@@ -144,9 +158,9 @@ class ControllerTests(unittest.TestCase):
             self.controller, "_ros", side_effect=[subprocess.CompletedProcess([], 0, "success: True"),
                                                    subprocess.CompletedProcess([], 0, "success: False")]
         ), patch.object(self.controller, "_emergency_stop") as stop, patch("controller.time.sleep"):
-            with self.assertRaisesRegex(ControllerError, "人体相机"):
+            with self.assertRaisesRegex(ControllerError, "人体停车门控拒绝启动"):
                 self.controller._launch_stage("start_tracking", {"safety_confirmed": True})
-            stop.assert_called_once()
+            stop.assert_not_called()
 
     def test_parameter_timeout_is_bounded_and_readable(self):
         import subprocess

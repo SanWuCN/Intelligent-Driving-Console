@@ -1,0 +1,16 @@
+[Unit]
+Description=Bigcar RGB-D person guard %i
+After=docker.service bigcar-console.service
+Requires=docker.service
+StartLimitIntervalSec=0
+
+[Service]
+Type=simple
+ExecStart=/bin/bash /home/nvidia/Desktop/bigcar-console/deploy/person-guard-run.sh %i
+ExecStop=-/bin/bash /home/nvidia/Desktop/bigcar-console/deploy/person-guard-run.sh %i stop
+Restart=always
+RestartSec=3
+TimeoutStopSec=10
+
+[Install]
+WantedBy=multi-user.target

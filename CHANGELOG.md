@@ -2,6 +2,32 @@
 
 ## 未发版（车端已应用，`VERSION` 仍为 1.3.0）
 
+### 一键启动与流程页
+
+- 流程页只留「序号 + 名称 + 状态」：删掉顶部说明、每步说明和重复的「已完成 / 等待上一步」，
+  只保留需要动手或有异常时的提示。第 6 步统一改名 **自主巡航**。
+- 右下角主按钮改成 **一键启动**：按顺序自动跑完六步，从当前进度接着往下走；
+  第 4 步等 RViz 的 `2D Pose Estimate`（收到位姿后 `localization_bootstrap` 自己拉起
+  `ndt_matching`，无需再点），等待期间按钮显示「标定完成，继续」；第 6 步自动弹出安全确认窗。
+  执行中可在旁边「停止自动」，失败或急停会主动中止。
+- 每一步的手动按钮保留（可以和以前一样单步执行），紧凑排布下六步刚好铺满、不滚动。
+
+### 人体停车门控
+
+- 新增 `person_command_gate` / `person_camera_observer` / `person_stop_policy` 与
+  `person_guard_tracking.launch`：深度相机发现车前方有人时拦住 `/ctrl_cmd` 让车停下，
+  默认 `observe_only` 只观察不拦截。状态经 `/person_guard/control_status` 上报，
+  控制台在「路径规划/跟踪」模块里显示门控是否已使能。详见 [人体停车门控](docs/PERSON_CAMERA.md)。
+- 新增 `deploy/bigcar-person@.service`、`deploy/person-guard-run.sh` 及其单元测试。
+
+### 实时地图与雷达布局与运维
+
+- 「系统状态」6 个模块不再被裁掉：状态面板按内容占高、模块表可内部滚动，
+  1366×768 下六行全部可见，窄窗口下参数面板也不再被压成一条缝。
+- 新增 `deploy-to-car.sh`：自动备份 → 同步后端+前端 → 重启服务，离线车自动跳过。
+- 实时桥接补齐孤儿进程防护：`SIGTERM` 干净退出、stdin EOF 自退、90 秒看门狗、
+  启动清扫，且无人观看时不再解析点云。
+
 ### 实时地图与雷达（RViz 式画面）
 
 - 新增 `backend/ros_bridge.py`：容器内 Python 2.7 常驻桥接，把 `/bms_flag_Infor_fb`、

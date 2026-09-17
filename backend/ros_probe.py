@@ -12,6 +12,7 @@ from __future__ import print_function
 
 import sys
 import time
+import json
 
 import genpy
 import rosgraph
@@ -85,6 +86,15 @@ def main():
     topics = sys.argv[1:]
     received = set()
     battery = {}
+    guard = {}
+
+    def read_guard(message):
+        try:
+            value = json.loads(message.data)
+            if isinstance(value, dict):
+                guard.update(value)
+        except (ValueError, TypeError):
+            pass
 
     def mark(_message, topic):
         received.add(topic)
@@ -114,9 +124,11 @@ def main():
     subscribers = [rospy.Subscriber(topic, AnyMsg, mark, callback_args=topic, queue_size=1) for topic in topics]
     subscribers += [rospy.Subscriber(topic, AnyMsg, read_battery, callback_args=topic, queue_size=1)
                     for topic in BATTERY_TOPICS]
+    from std_msgs.msg import String
+    subscribers.append(rospy.Subscriber('/person_guard/control_status', String, read_guard, queue_size=1))
     deadline = time.time() + 1.4
     while time.time() < deadline and not rospy.is_shutdown():
-        if len(received) >= len(topics) + len(BATTERY_TOPICS):
+        if len(received) >= len(topics) + len(BATTERY_TOPICS) and guard:
             break
         time.sleep(0.03)
     for subscriber in subscribers:
@@ -135,6 +147,8 @@ def main():
     print("__BATTERY__")
     for key in sorted(battery):
         print("%s %r" % (key, battery[key]))
+    print("__GUARD__")
+    print(json.dumps(guard))
 
 
 if __name__ == "__main__":

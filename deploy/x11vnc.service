@@ -1,0 +1,15 @@
+[Unit]
+Description=VNC mirror of physical Jetson display
+After=display-manager.service
+Wants=display-manager.service
+
+[Service]
+Type=simple
+User=root
+ExecStartPre=/bin/sleep 6
+ExecStart=/usr/bin/x11vnc -display :0 -auth /run/user/1000/gdm/Xauthority -rfbauth /etc/x11vnc.pass -rfbport 5900 -forever -loop -shared -repeat -noxdamage -nowf -nobell -o /var/log/x11vnc.log
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target
