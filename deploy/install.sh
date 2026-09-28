@@ -55,6 +55,8 @@ systemctl daemon-reload
 systemctl enable --now bigcar-console.service
 systemctl restart bigcar-console.service
 
+bash "$APP_DIR/deploy/install-wifi-watchdog.sh"
+
 install -m 0755 "$APP_DIR/deploy/bigcar-console.desktop" "/home/nvidia/Desktop/智能驾驶控制台.desktop"
 chown nvidia:nvidia "/home/nvidia/Desktop/智能驾驶控制台.desktop"
 rm -f "/home/nvidia/Desktop/智能驾驶大车控制台.desktop"

@@ -53,6 +53,20 @@ sudo journalctl -u bigcar-console.service -f
 
 安装后桌面会出现“智能驾驶控制台”快捷方式。车端访问 `http://127.0.0.1:8765`，局域网设备使用 Jetson IP 访问 `8765` 端口。
 
+安装脚本还会：
+
+- 将 NetworkManager 全局配置和所有已保存 Wi-Fi 连接的省电模式显式设为关闭；
+- 启用 `bigcar-wifi-watchdog.service`，每 15 秒检查 `wlan0` 的连接与 IPv4 地址；
+- 掉线时重新扫描并激活已保存的网络，连续失败时重置 Wi-Fi 射频后继续尝试。
+
+守护进程只检查局域网链路，**不依赖公网地址或 DNS**，所以路由器没有互联网时不会误触发重连。
+
+```bash
+iw dev wlan0 get power_save
+systemctl status bigcar-wifi-watchdog.service
+journalctl -u bigcar-wifi-watchdog.service -f
+```
+
 ## 5. 升级
 
 1. 在开发机执行测试与构建。

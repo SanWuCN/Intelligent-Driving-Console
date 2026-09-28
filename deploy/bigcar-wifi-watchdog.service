@@ -1,0 +1,20 @@
+[Unit]
+Description=BigCar Wi-Fi reconnect watchdog
+After=NetworkManager.service
+Wants=NetworkManager.service
+
+[Service]
+Type=simple
+ExecStart=/usr/local/sbin/bigcar-wifi-watchdog
+Restart=always
+RestartSec=5
+Environment=WIFI_INTERFACE=wlan0
+Environment=CHECK_INTERVAL_SECONDS=15
+Environment=RADIO_RESET_AFTER_FAILURES=4
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=true
+PrivateTmp=true
+
+[Install]
+WantedBy=multi-user.target
