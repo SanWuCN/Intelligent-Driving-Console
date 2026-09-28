@@ -9,8 +9,10 @@ ExecStart=/usr/local/sbin/bigcar-wifi-watchdog
 Restart=always
 RestartSec=5
 Environment=WIFI_INTERFACE=wlan0
+Environment=WIFI_SSID=tx801
+Environment=WIFI_BSSID=64:64:4A:A3:0F:B3
 Environment=CHECK_INTERVAL_SECONDS=15
-Environment=RADIO_RESET_AFTER_FAILURES=4
+Environment=RADIO_RESET_AFTER_FAILURES=2
 NoNewPrivileges=true
 ProtectSystem=strict
 ProtectHome=true

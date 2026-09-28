@@ -27,6 +27,7 @@ class ConvoyCoordinator:
         self.routes = {}
         self.projections = {}
         self.pairs = {}
+        self.last_ahead = {}
         self.last_modes = {}
         self.controlled = set()
         self.status = {
@@ -160,12 +161,54 @@ class ConvoyCoordinator:
     def _safe_stop(self, identifiers, reason, telemetry):
         commands = {}
         for identifier in identifiers:
-            nominal = float((telemetry.get(identifier, {}).get('control') or {}).get('nominal_speed_mps') or 0.2)
+            payload = telemetry.get(identifier) or {}
+            nominal = float((payload.get('control') or {}).get('nominal_speed_mps') or 0.2)
             commands[identifier] = {
                 'mode': 'safety_stop', 'speed_mps': 0.0, 'after_speed_mps': nominal * 0.7,
                 'event_id': 'safety-' + self.session, 'detail': reason,
             }
         return commands
+
+    def _nominal_command(self, identifier, telemetry, detail):
+        payload = telemetry.get(identifier) or {}
+        remote = (self.fleet.states.get(identifier, {}).get('state') or {})
+        nominal = float((payload.get('control') or {}).get('nominal_speed_mps') or
+                        remote.get('parameters', {}).get('speed_limit_mps') or 0.2)
+        return {'mode': 'clear', 'speed_mps': nominal, 'after_speed_mps': nominal,
+                'event_id': '', 'detail': detail}
+
+    def _degraded_commands(self, group, failed, states, telemetry, reason):
+        """Stop the affected tail of the last known chain, not its leader."""
+        identifiers = group['vehicles']
+        ahead = self.last_ahead.get((group['id'], group['route']))
+        if not ahead or len(failed) >= len(identifiers):
+            return None, set(identifiers)
+
+        # A failed rear/middle car must stop locally.  Every car behind a
+        # failed car also stops because its distance to the obstruction is now
+        # unknown.  The frontmost car has no `ahead` entry and keeps nominal
+        # speed so a follower outage cannot stop the leader.
+        blocked = set(failed)
+        stopped = {identifier for identifier in failed if identifier in ahead}
+        changed = True
+        while changed:
+            changed = False
+            for rear, front in ahead.items():
+                if front in blocked and rear not in stopped:
+                    stopped.add(rear)
+                    blocked.add(rear)
+                    changed = True
+
+        commands = {}
+        for identifier in identifiers:
+            if not states.get(identifier, {}).get('online'):
+                continue
+            if identifier in stopped:
+                commands.update(self._safe_stop([identifier], reason, telemetry))
+            else:
+                commands[identifier] = self._nominal_command(
+                    identifier, telemetry, '前后关系已保留；故障位于本车后方，前车保持常速')
+        return commands, stopped
 
     def tick(self):
         groups, states = self._groups()
@@ -182,12 +225,16 @@ class ConvoyCoordinator:
             group_view = {'job_id': group['id'], 'route': group['route'], 'vehicles': identifiers,
                           'route_hash': '', 'pairs': [], 'state': 'active', 'error': ''}
             failures = dict((identifier, read_errors[identifier]) for identifier in identifiers if identifier in read_errors)
+            position_failures = set(failures)
             route_hashes = set()
             map_names = set()
             poses = {}
             for identifier in identifiers:
                 payload = telemetry.get(identifier)
                 try:
+                    if not isinstance(payload, dict):
+                        position_failures.add(identifier)
+                        raise ValueError('车端编队接口无响应')
                     if payload.get('selected_route') != group['route']:
                         raise ValueError('车端选中路线与批次不一致')
                     route_hash = str(payload.get('route_hash') or '')
@@ -198,9 +245,14 @@ class ConvoyCoordinator:
                     if not map_name:
                         raise ValueError('地图名称缺失')
                     map_names.add(map_name)
+                except Exception as exc:
+                    failures[identifier] = str(exc)
+                    continue
+                try:
                     poses[identifier] = self._validate_pose(payload)
                 except Exception as exc:
                     failures[identifier] = str(exc)
+                    position_failures.add(identifier)
 
             if not failures and len(route_hashes) != 1:
                 failures['route'] = '同名 CSV 内容不一致'
@@ -208,14 +260,24 @@ class ConvoyCoordinator:
                 failures['map'] = '车辆选中的地图不一致'
             if failures:
                 reason = '编队数据不完整，安全停车：' + '；'.join(f'{key}:{value}' for key, value in failures.items())
+                failed = {key for key in failures if key in identifiers}
+                partial = bool(failed) and failed == position_failures
+                degraded, stopped = self._degraded_commands(
+                    group, failed, states, telemetry, reason) if partial else (None, set(identifiers))
+                if degraded is None:
+                    degraded = self._safe_stop(
+                        [identifier for identifier in identifiers if states.get(identifier, {}).get('online')],
+                        reason, telemetry,
+                    )
+                commands.update(degraded)
                 for identifier in identifiers:
-                    vehicle_status[identifier] = {'mode': 'safety_stop', 'gap_m': None, 'ahead': None,
-                                                  'detail': reason}
-                commands.update(self._safe_stop(
-                    [identifier for identifier in identifiers if states.get(identifier, {}).get('online')],
-                    reason, telemetry,
-                ))
-                group_view.update(state='safety_stop', error=reason)
+                    is_stopped = identifier in stopped
+                    vehicle_status[identifier] = {
+                        'mode': 'safety_stop' if is_stopped else 'clear', 'gap_m': None,
+                        'ahead': self.last_ahead.get((group['id'], group['route']), {}).get(identifier),
+                        'detail': reason if is_stopped else '故障位于本车后方，前车保持常速',
+                    }
+                group_view.update(state='degraded' if stopped != set(identifiers) else 'safety_stop', error=reason)
                 group_status.append(group_view)
                 continue
 
@@ -264,7 +326,14 @@ class ConvoyCoordinator:
                     'event_id': '', 'detail': '编队间距正常',
                 }
 
-            for rear, front, gap in ordered_gaps(progress, route.length):
+            gaps = ordered_gaps(progress, route.length)
+            if gaps:
+                largest = max(gaps, key=lambda item: item[2])
+                self.last_ahead[(group['id'], group['route'])] = {
+                    rear: front for rear, front, gap in gaps if (rear, front, gap) != largest
+                }
+
+            for rear, front, gap in gaps:
                 pair_key = (group['id'], route_hash, rear, front)
                 active_pair_keys.add(pair_key)
                 state = self.pairs.setdefault(pair_key, SpacingState())

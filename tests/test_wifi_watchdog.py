@@ -27,12 +27,18 @@ class WifiWatchdogTests(unittest.TestCase):
               [[ -f {self.marker!s} ]] && echo '100 (connected)' || echo '30 (disconnected)'
               exit 0
             fi
-            if [[ "$*" == "--wait 20 device connect wlan0" ]]; then
+            if [[ "$*" == "-g 802-11-wireless.ssid connection show uuid tx801-uuid" ]]; then
+              echo tx801
+              exit 0
+            fi
+            if [[ "$*" == "--wait 20 connection up uuid tx801-uuid ifname wlan0" ]]; then
               [[ "${{NMCLI_CONNECT_RESULT:-success}}" == success ]] || exit 10
               touch {self.marker!s}
               exit 0
             fi
             if [[ "$*" == "-t -f UUID,TYPE,AUTOCONNECT connection show" ]]; then
+              echo 'tx801-uuid:802-11-wireless:yes'
+              echo 'guest-uuid:802-11-wireless:yes'
               exit 0
             fi
             exit 0
@@ -72,7 +78,7 @@ class WifiWatchdogTests(unittest.TestCase):
         self.marker.touch()
         result = self._run_once()
         self.assertEqual(result.returncode, 0, result.stderr)
-        self.assertNotIn("device connect", self.calls.read_text(encoding="utf-8"))
+        self.assertNotIn("connection up", self.calls.read_text(encoding="utf-8"))
 
     def test_disconnected_link_reconnects_a_saved_network(self):
         result = self._run_once()
@@ -80,7 +86,8 @@ class WifiWatchdogTests(unittest.TestCase):
         self.assertTrue(self.marker.exists())
         self.assertIn("Wi-Fi reconnect succeeded", result.stdout)
         calls = self.calls.read_text(encoding="utf-8")
-        self.assertIn("device connect wlan0", calls)
+        self.assertIn("connection up uuid tx801-uuid ifname wlan0", calls)
+        self.assertNotIn("connection up uuid guest-uuid", calls)
         self.assertIn("dev wlan0 set power_save off", calls)
 
     def test_failed_reconnect_returns_failure_in_one_shot_mode(self):

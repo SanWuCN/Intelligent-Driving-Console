@@ -109,12 +109,28 @@ class ConvoyCoordinatorTests(unittest.TestCase):
         self.assertEqual(self.fleet.commands['a']['mode'], 'clear')
         self.assertEqual(self.fleet.commands['b']['mode'], 'clear')
 
-    def test_missing_pose_stops_every_reachable_car(self):
+    def test_missing_rear_pose_stops_only_the_rear_after_order_is_known(self):
+        self.fleet.telemetry['b'] = self.fleet.payload(6.0, 0.0, 0.0)
+        self.coordinator.tick()
+        self.fleet.telemetry['a']['pose'] = None
+        self.coordinator.tick()
+        self.assertEqual(self.fleet.commands['a']['mode'], 'safety_stop')
+        self.assertEqual(self.fleet.commands['b']['mode'], 'clear')
+        self.assertEqual(self.coordinator.snapshot()['groups'][0]['state'], 'degraded')
+
+    def test_missing_front_pose_stops_rear_but_keeps_front_nominal(self):
+        self.fleet.telemetry['b'] = self.fleet.payload(6.0, 0.0, 0.0)
+        self.coordinator.tick()
+        self.fleet.telemetry['b']['pose'] = None
+        self.coordinator.tick()
+        self.assertEqual(self.fleet.commands['a']['mode'], 'safety_stop')
+        self.assertEqual(self.fleet.commands['b']['mode'], 'clear')
+
+    def test_missing_pose_without_known_order_stops_every_reachable_car(self):
         self.fleet.telemetry['a']['pose'] = None
         self.coordinator.tick()
         self.assertEqual(self.fleet.commands['a']['mode'], 'safety_stop')
         self.assertEqual(self.fleet.commands['b']['mode'], 'safety_stop')
-        self.assertEqual(self.coordinator.snapshot()['groups'][0]['state'], 'safety_stop')
 
     def test_route_content_mismatch_stops_both_cars(self):
         self.fleet.telemetry['b']['route_hash'] = 'different-hash'
