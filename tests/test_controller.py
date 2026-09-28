@@ -320,6 +320,54 @@ class ControllerTests(unittest.TestCase):
         self.assertIn("1.50 m/s", message)
         self.assertAlmostEqual(self.controller.parameters()["speed_limit_mps"], 1.5)
 
+    def test_convoy_hold_is_temporary_and_does_not_change_nominal_speed(self):
+        self.controller.apply_speed(1.0)
+        result = self.controller.apply_convoy_control({
+            'mode': 'hold', 'speed_mps': 0, 'after_speed_mps': 0.7,
+            'session': 'fleet-a', 'sequence': 1, 'event_id': 'pair-1',
+        })
+        self.assertEqual(result['mode'], 'hold')
+        self.assertEqual(result['commanded_speed_mps'], 0)
+        self.assertEqual(self.controller.parameters()['speed_limit_mps'], 1.0)
+
+        with self.controller._lock:
+            self.controller._convoy_control['_hold_until'] = time.monotonic() - 0.01
+        deadline = time.monotonic() + 1
+        while self.controller.convoy_control_state()['mode'] != 'slow' and time.monotonic() < deadline:
+            time.sleep(0.02)
+        state = self.controller.convoy_control_state()
+        self.assertEqual(state['mode'], 'slow')
+        self.assertAlmostEqual(state['commanded_speed_mps'], 0.7)
+        self.assertEqual(self.controller.parameters()['speed_limit_mps'], 1.0)
+
+    def test_stale_convoy_sequence_cannot_overwrite_newer_command(self):
+        self.controller.apply_convoy_control({
+            'mode': 'slow', 'speed_mps': 0.7, 'session': 'fleet-a', 'sequence': 4,
+        })
+        state = self.controller.apply_convoy_control({
+            'mode': 'boost', 'speed_mps': 1.1, 'session': 'fleet-a', 'sequence': 3,
+        })
+        self.assertEqual(state['mode'], 'slow')
+        self.assertAlmostEqual(state['commanded_speed_mps'], 0.7)
+
+    def test_expired_convoy_lease_restores_leader_but_stops_follower(self):
+        self.controller.apply_speed(1.0)
+        for mode, speed, expected_mode, expected_speed in [
+            ('boost', 1.1, 'clear', 1.0),
+            ('slow', 0.7, 'safety_stop', 0.0),
+        ]:
+            self.controller.apply_convoy_control({
+                'mode': mode, 'speed_mps': speed, 'session': mode, 'sequence': 1,
+            })
+            with self.controller._lock:
+                self.controller._convoy_control['_expires_at'] = time.monotonic() - 0.01
+            deadline = time.monotonic() + 1
+            while self.controller.convoy_control_state()['mode'] == mode and time.monotonic() < deadline:
+                time.sleep(0.02)
+            state = self.controller.convoy_control_state()
+            self.assertEqual(state['mode'], expected_mode)
+            self.assertAlmostEqual(state['commanded_speed_mps'], expected_speed)
+
     def test_speed_dispatch_is_coalesced_in_the_background(self):
         """连续拖动滑杆只下发最后一次，且请求线程不被 rostopic pub 阻塞。"""
         self.controller.simulate = False

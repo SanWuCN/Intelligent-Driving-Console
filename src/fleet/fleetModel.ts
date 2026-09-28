@@ -82,7 +82,34 @@ export type Config = {
   localization_timeout: number
 }
 
-export type Snapshot = { vehicles: Vehicle[]; jobs: Job[]; settings: Config; timestamp: number }
+export type ConvoyVehicleState = {
+  mode: 'clear' | 'boost' | 'slow' | 'hold' | 'safety_stop'
+  progress_m?: number
+  route_error_m?: number
+  gap_m: number | null
+  ahead: string | null
+  detail: string
+  command_error?: string
+}
+
+export type ConvoyState = {
+  enabled: boolean
+  interval_seconds: number
+  active: boolean
+  updated: number | null
+  error: string
+  vehicles: Record<string, ConvoyVehicleState>
+}
+
+export type Snapshot = { vehicles: Vehicle[]; jobs: Job[]; settings: Config; convoy?: ConvoyState; timestamp: number }
+
+export const CONVOY_LABEL: Record<ConvoyVehicleState['mode'], string> = {
+  clear: '编队间距正常',
+  boost: '前车提速 10%',
+  slow: '后车减速 30%',
+  hold: '后车停车 5 秒',
+  safety_stop: '编队安全停车',
+}
 
 export const STEPS = ['环境检查', '底盘与雷达', 'Autoware', '地图与标定', '路径配置', '循迹运行']
 export const TERMINAL = ['completed', 'failed', 'cancelled', 'interrupted']

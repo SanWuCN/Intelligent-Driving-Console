@@ -7,7 +7,7 @@ import {
 import { ScreenMonitor } from '../components/ScreenMonitor'
 import { JobCard } from './JobCard'
 import {
-  STEPS, TERMINAL, api, clock, csvCell, dayKey, duration, historyRows, isAbnormal, stateLabel, stamp,
+  CONVOY_LABEL, STEPS, TERMINAL, api, clock, csvCell, dayKey, duration, historyRows, isAbnormal, stateLabel, stamp,
   type Config, type Job, type Row, type Snapshot, type Vehicle,
 } from './fleetModel'
 import './fleet.css'
@@ -264,6 +264,13 @@ export default function FleetApp() {
                           <div className="fleet-ip">{v.ip}</div>
                           <span className={`fleet-badge ${!v.online ? 'offline' : isAbnormal(v) ? 'failed' : 'completed'}`}>{stateLabel(v)}</span>
                           {v.state?.simulated && <span className="fleet-badge">模拟设备</span>}
+                          {data?.convoy?.vehicles?.[v.id] && (
+                            <span className={`fleet-badge convoy-${data.convoy.vehicles[v.id].mode}`}
+                              title={data.convoy.vehicles[v.id].detail}>
+                              {CONVOY_LABEL[data.convoy.vehicles[v.id].mode]}
+                              {data.convoy.vehicles[v.id].gap_m != null && ` · ${data.convoy.vehicles[v.id].gap_m?.toFixed(1)}m`}
+                            </span>
+                          )}
                           <div className="fleet-metrics">
                             <span>电量<strong className={(v.state?.battery?.soc ?? 100) <= 20 ? 'low' : ''}>{v.state?.battery?.soc == null ? '—' : `${Number(v.state.battery.soc).toFixed(0)}%`}</strong></span>
                             <span>CPU<strong>{v.state?.telemetry.cpu_percent ?? '—'}%</strong></span>
@@ -300,7 +307,8 @@ export default function FleetApp() {
             </ol>
             <p className="fleet-batch-note">
               整批按下表逐辆走完同样六步：前一步所有车都完成，才进入下一步。第 4 步地图与标定会逐辆弹出屏幕让你定位，
-              第 6 步循迹运行需要逐辆确认现场安全。中途想停在第 5 步待命，在任务卡上点「取消整批」即可。
+              第 6 步循迹运行需要逐辆确认现场安全。同一批中使用相同路线的车辆会自动进入 3 秒一次的编队间距协同。
+              中途想停在第 5 步待命，在任务卡上点「取消整批」即可。
             </p>
             {chosen.length === 0
               ? <div className="fleet-empty compact">尚未选择车辆<button onClick={() => go('vehicles')}>选择车辆</button></div>

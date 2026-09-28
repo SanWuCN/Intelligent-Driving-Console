@@ -12,7 +12,7 @@ from fleet import ACTIONS, TITLES, Fleet, FleetError
 
 
 def default_remote():
-    return {'current_stage': 0, 'workflow': [], 'telemetry': {}, 'maps': [{'name': 'room.pcd'}], 'routes': [{'name': 'loop.csv'}], 'selected_map': 'room.pcd', 'selected_route': 'loop.csv', 'busy': None, 'last_error': None, 'emergency': False, 'live_topics': [], 'simulated': False}
+    return {'current_stage': 0, 'workflow': [], 'telemetry': {}, 'maps': [{'name': 'room.pcd'}], 'routes': [{'name': 'loop.csv'}], 'selected_map': 'room.pcd', 'selected_route': 'loop.csv', 'busy': None, 'last_error': None, 'emergency': False, 'live_topics': [], 'simulated': False, 'convoy_control': {'active': False, 'mode': 'clear'}}
 
 
 class FakeFleet(Fleet):
@@ -128,6 +128,13 @@ class FleetTests(unittest.TestCase):
         self.job()
         with self.assertRaises(FleetError):
             self.job()
+
+    def test_same_route_batch_rejects_a_car_without_convoy_support(self):
+        second = self.add_second_car()
+        self.fleet.remotes[second].pop('convoy_control')
+        self.fleet.refresh(second)
+        with self.assertRaisesRegex(FleetError, '未安装编队防碰版本'):
+            self.fleet.create_job({'vehicles': [self.identifier, second]})
 
     def test_emergency_cancels_pending_start(self):
         job, row = self.job()
@@ -284,7 +291,8 @@ class FleetTests(unittest.TestCase):
         # confirming the last car releases the whole batch into step 5 and 6
         self.fleet.remotes[second].update(current_stage=4, live_topics=['/current_pose'])
         self.fleet.job_action(job['id'], {'vehicle_id': second, 'action': 'localization_done'})
-        self.wait_for(lambda: job['phase'] == 6, timeout=6)
+        self.wait_for(lambda: job['phase'] == 6 and all(
+            row['status'] == 'awaiting_start' for row in job['rows']), timeout=6)
         self.assertEqual([record['status'] for record in first_row['steps'][:5]], ['ok'] * 5)
         self.assertEqual([record['status'] for record in second_row['steps'][:5]], ['ok'] * 5)
         self.assertEqual(first_row['status'], 'awaiting_start')

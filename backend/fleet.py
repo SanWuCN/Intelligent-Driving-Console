@@ -19,6 +19,8 @@ from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from urllib.parse import urlparse
 
+from convoy_coordinator import ConvoyCoordinator
+
 ROOT = Path(__file__).resolve().parents[1]
 ACTIONS = ['environment_check', 'start_hardware', 'start_autoware', 'start_localization', 'load_route', 'start_tracking']
 TITLES = ['环境检查', '底盘与雷达', 'Autoware', '地图与标定', '路径配置', '循迹运行']
@@ -71,6 +73,7 @@ class Fleet:
                     row.update(status='interrupted', message='管理服务已重启，请核对车端状态后重试',
                                finished=time.time())
                     self.close_open_steps(row, 'cancelled', '管理服务重启')
+        self.convoy = ConvoyCoordinator(self)
         self.save()
 
     def save(self):
@@ -89,8 +92,8 @@ class Fleet:
                 raise FleetError('车辆不存在')
             return dict(self.vehicles[identifier])
 
-    def request(self, vehicle, path='/api/state', body=None):
-        connection = http.client.HTTPConnection(vehicle['ip'], vehicle['port'], timeout=12)
+    def request(self, vehicle, path='/api/state', body=None, timeout=12):
+        connection = http.client.HTTPConnection(vehicle['ip'], vehicle['port'], timeout=timeout)
         try:
             headers = {'X-Control-Token': vehicle['token'], 'Content-Type': 'application/json'}
             connection.request('POST' if body is not None else 'GET', path,
@@ -193,7 +196,8 @@ class Fleet:
         with self.lock:
             vehicles = [{**{k: v for k, v in vehicle.items() if k != 'token'}, **self.states.get(identifier, {'online': False, 'state': None, 'error': '等待连接'})} for identifier, vehicle in self.vehicles.items()]
             return copy.deepcopy({'vehicles': vehicles, 'jobs': [self.job_view(job) for job in self.jobs],
-                                  'settings': self.settings, 'timestamp': time.time()})
+                                  'settings': self.settings, 'convoy': self.convoy.snapshot(),
+                                  'timestamp': time.time()})
 
     def change(self, row, **values):
         with self.lock:
@@ -276,6 +280,13 @@ class Fleet:
                 if state['current_stage'] >= 6:
                     raise FleetError(f"{vehicle['name']} 已在循迹运行，请先在本页复位该车或直接在车端接管")
                 rows.append(blank_row(vehicle, map_name, route))
+            route_counts = Counter(row['route'] for row in rows)
+            for row in rows:
+                if route_counts[row['route']] < 2:
+                    continue
+                remote = (self.states.get(row['vehicle_id'], {}).get('state') or {})
+                if 'convoy_control' not in remote:
+                    raise FleetError(f"{row['name']} 车端未安装编队防碰版本，禁止发起同路线多车任务")
             # A batch always walks the whole six-step flow, one step for every car
             # before the next step starts. There is no per-car finish line.
             job = {'id': uuid.uuid4().hex, 'created': time.time(), 'target': len(ACTIONS), 'phase': 0,
@@ -697,12 +708,14 @@ def main():
     handler = type('FleetHandler', (Handler,), {'fleet': fleet})
     server = ThreadingHTTPServer(('127.0.0.1', args.port), handler)
     threading.Thread(target=fleet.poll, daemon=True).start()
+    fleet.convoy.start()
     print(f'智能驾驶管理平台 http://127.0.0.1:{args.port}/fleet', flush=True)
     try:
         server.serve_forever()
     except KeyboardInterrupt:
         pass
     finally:
+        fleet.convoy.stop()
         server.server_close()
 
 

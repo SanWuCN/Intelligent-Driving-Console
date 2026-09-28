@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import ast
 import csv
+import hashlib
 import json
 import math
 import os
@@ -38,6 +39,8 @@ DEFAULT_PARAMETERS = {
 
 SPEED_MIN_MPS = 0.2
 SPEED_MAX_MPS = 2.0
+CONVOY_MAX_POSE_AGE_SECONDS = 2.0
+CONVOY_LEASE_SECONDS = 10.0
 
 # 激光雷达避障（velocity_set 点云停车/减速）总开关。
 # False：检测半径归零 + 点数阈值取 int32 上限，点云永远达不到判定条件，
@@ -434,7 +437,15 @@ class BigCarController:
         self._speed_pending: Optional[Dict[str, Any]] = None
         self._speed_wake = threading.Event()
         self._closing = threading.Event()
+        self._convoy_probe_cache: Tuple[float, Optional[Dict[str, Any]]] = (0.0, None)
+        self._route_hash_cache: Optional[Tuple[str, float, int, str]] = None
+        self._convoy_control: Dict[str, Any] = {
+            "active": False, "mode": "clear", "commanded_speed_mps": float(self.parameters()["speed_limit_mps"]),
+            "session": "", "sequence": -1, "event_id": "", "detail": "", "updated": None,
+            "_expires_at": None, "_hold_until": None, "_after_speed_mps": None,
+        }
         threading.Thread(target=self._speed_worker, name="speed-dispatch", daemon=True).start()
+        threading.Thread(target=self._convoy_worker, name="convoy-lease", daemon=True).start()
         self.live = LiveBridge(self)
         self.log("INFO", "system", "智能驾驶控制台后端已启动")
         if self.simulate:
@@ -479,6 +490,78 @@ class BigCarController:
     def parameters(self) -> Dict[str, Any]:
         configured = self.config.get("parameters", {})
         return {**DEFAULT_PARAMETERS, **configured} if isinstance(configured, dict) else DEFAULT_PARAMETERS.copy()
+
+    def _route_digest(self) -> str:
+        name = str(self.config.get("selected_route", ""))
+        if not name:
+            return ""
+        path = self.resolve_data_file(name, ".csv")
+        stat = path.stat()
+        cached = self._route_hash_cache
+        if cached and cached[:3] == (str(path), stat.st_mtime, stat.st_size):
+            return cached[3]
+        # Only geometry defines "the same route" for spacing.  Line endings,
+        # headers and each car's recorded velocity column may legitimately differ.
+        digest = hashlib.sha256()
+        for point in self.route_data(name)["points"]:
+            digest.update(f"{point['x']:.6f},{point['y']:.6f}\n".encode("ascii"))
+        value = digest.hexdigest()
+        self._route_hash_cache = (str(path), stat.st_mtime, stat.st_size, value)
+        return value
+
+    def _convoy_pose(self) -> Optional[Dict[str, Any]]:
+        """Read one fresh `/current_pose` sample without keeping a ROS bridge alive."""
+        if self.simulate:
+            return None
+        now = time.monotonic()
+        cached_at, cached = self._convoy_probe_cache
+        if now - cached_at < 1.0:
+            return dict(cached) if cached else None
+        result = self._ros(
+            "timeout -k 1 3 python2 /from_host/bigcar-console/backend/convoy_probe.py", timeout=4
+        )
+        pose = None
+        if result.returncode == 0:
+            for raw in reversed(result.stdout.splitlines()):
+                try:
+                    candidate = json.loads(raw.strip())
+                except (TypeError, ValueError):
+                    continue
+                if not isinstance(candidate, dict):
+                    continue
+                try:
+                    values = [float(candidate[key]) for key in ("x", "y", "yaw", "pose_age")]
+                except (KeyError, TypeError, ValueError):
+                    continue
+                if all(math.isfinite(value) for value in values):
+                    pose = candidate
+                    break
+        self._convoy_probe_cache = (time.monotonic(), pose)
+        return dict(pose) if pose else None
+
+    def convoy_control_state(self) -> Dict[str, Any]:
+        with self._lock:
+            state = {key: value for key, value in self._convoy_control.items() if not key.startswith("_")}
+            hold_until = self._convoy_control.get("_hold_until")
+        state["hold_remaining_seconds"] = round(max(0.0, hold_until - time.monotonic()), 2) if hold_until else 0.0
+        state["nominal_speed_mps"] = round(float(self.parameters()["speed_limit_mps"]), 3)
+        return state
+
+    def convoy_snapshot(self) -> Dict[str, Any]:
+        """Small authenticated payload consumed by the local fleet coordinator."""
+        try:
+            route_hash = self._route_digest()
+        except (ControllerError, OSError):
+            route_hash = ""
+        pose = self._convoy_pose()
+        return {
+            "vehicle_time": time.time(),
+            "selected_map": str(self.config.get("selected_map", "")),
+            "selected_route": str(self.config.get("selected_route", "")),
+            "route_hash": route_hash,
+            "pose": pose,
+            "control": self.convoy_control_state(),
+        }
 
     def issue_screen_ticket(self) -> Dict[str, Any]:
         ticket = secrets.token_urlsafe(24)
@@ -841,8 +924,8 @@ class BigCarController:
         queued = self.simulate or self._container_running()
         if queued:
             with self._lock:
-                self._speed_pending = merged
-            self._speed_wake.set()
+                override = self._convoy_control.get("commanded_speed_mps") if self._convoy_control.get("active") else None
+            self._queue_effective_speed(value if override is None else float(override), merged)
         self.log(
             "INFO",
             "tuning",
@@ -850,6 +933,107 @@ class BigCarController:
             + ("，正在下发到车端" if queued else "；车端未运行，已保存待下发"),
         )
         return {"speed_limit_mps": value, "published": queued, "action": action}
+
+    def _queue_effective_speed(self, speed_mps: float, base: Optional[Dict[str, Any]] = None) -> None:
+        parameters = dict(base or self.parameters())
+        parameters["speed_limit_mps"] = max(0.0, min(SPEED_MAX_MPS, float(speed_mps)))
+        with self._lock:
+            self._speed_pending = parameters
+        self._speed_wake.set()
+
+    def apply_convoy_control(self, data: Dict[str, Any]) -> Dict[str, Any]:
+        """Apply a leased, non-persistent speed override from the fleet coordinator."""
+        mode = str(data.get("mode", ""))
+        if mode not in {"clear", "boost", "slow", "hold", "safety_stop"}:
+            raise ControllerError("编队控制模式无效")
+        try:
+            sequence = int(data.get("sequence", 0))
+            requested = float(data.get("speed_mps", self.parameters()["speed_limit_mps"]))
+            after_speed = float(data.get("after_speed_mps", requested))
+        except (TypeError, ValueError):
+            raise ControllerError("编队速度命令无效")
+        if not all(math.isfinite(value) and 0.0 <= value <= SPEED_MAX_MPS
+                   for value in (requested, after_speed)):
+            raise ControllerError(f"编队速度必须在 0 至 {SPEED_MAX_MPS} m/s 之间")
+
+        session = str(data.get("session", ""))[:80]
+        event_id = str(data.get("event_id", ""))[:120]
+        detail = str(data.get("detail", ""))[:240]
+        now_mono = time.monotonic()
+        now_wall = time.time()
+        with self._lock:
+            if self._emergency and mode not in {"hold", "safety_stop"}:
+                raise ControllerError("车辆处于急停状态，拒绝恢复编队速度")
+            current = self._convoy_control
+            if session and current.get("session") == session and sequence <= int(current.get("sequence", -1)):
+                return self.convoy_control_state()
+
+            same_hold = (mode == "hold" and event_id and current.get("event_id") == event_id
+                         and current.get("mode") in ("hold", "slow"))
+            hold_until = current.get("_hold_until") if same_hold else None
+            effective_mode = current.get("mode") if same_hold and current.get("mode") == "slow" else mode
+            if mode == "hold" and hold_until is None:
+                hold_until = now_mono + 5.0
+
+            if effective_mode == "clear":
+                effective = float(self.parameters()["speed_limit_mps"])
+                expires_at = hold_until = None
+                active = False
+            elif effective_mode == "hold":
+                effective = 0.0
+                expires_at = now_mono + CONVOY_LEASE_SECONDS
+                active = True
+            elif effective_mode == "slow" and same_hold:
+                effective = float(current.get("commanded_speed_mps", after_speed))
+                expires_at = now_mono + CONVOY_LEASE_SECONDS
+                active = True
+            else:
+                effective = requested
+                expires_at = now_mono + CONVOY_LEASE_SECONDS
+                active = True
+
+            self._convoy_control = {
+                "active": active, "mode": effective_mode, "commanded_speed_mps": effective,
+                "session": session, "sequence": sequence, "event_id": event_id,
+                "detail": detail, "updated": now_wall, "_expires_at": expires_at,
+                "_hold_until": hold_until, "_after_speed_mps": after_speed if mode == "hold" else None,
+            }
+
+        self._queue_effective_speed(effective)
+        self.log("WARN" if effective <= 0 else "INFO", "convoy",
+                 f"编队控制 {effective_mode}：目标速度 {effective:.2f} m/s" + (f"，{detail}" if detail else ""))
+        return self.convoy_control_state()
+
+    def _convoy_worker(self) -> None:
+        """Finish the exact 5 s hold locally and fail safe when a lease expires."""
+        while not self._closing.wait(0.1):
+            effective = None
+            message = ""
+            with self._lock:
+                state = self._convoy_control
+                now = time.monotonic()
+                if state.get("mode") == "hold" and state.get("_hold_until") and now >= state["_hold_until"]:
+                    effective = float(state.get("_after_speed_mps") or 0.0)
+                    state.update(mode="slow", commanded_speed_mps=effective, _hold_until=None,
+                                 _after_speed_mps=None, updated=time.time())
+                    message = f"编队停车 5 秒完成，后车以 {effective:.2f} m/s 继续拉开距离"
+                expires_at = state.get("_expires_at")
+                if effective is None and state.get("active") and expires_at and now >= expires_at:
+                    if state.get("mode") == "boost":
+                        effective = float(self.parameters()["speed_limit_mps"])
+                        state.update(active=False, mode="clear", commanded_speed_mps=effective,
+                                     detail="编队命令超时，前车恢复常速", _expires_at=None,
+                                     _hold_until=None, _after_speed_mps=None, updated=time.time())
+                        message = "编队命令超时，前车恢复常速"
+                    else:
+                        effective = 0.0
+                        state.update(active=True, mode="safety_stop", commanded_speed_mps=0.0,
+                                     detail="编队命令超时，后车保持停车", _expires_at=None,
+                                     _hold_until=None, _after_speed_mps=None, updated=time.time())
+                        message = "编队命令超时，后车保持停车"
+            if effective is not None:
+                self._queue_effective_speed(effective)
+                self.log("WARN", "convoy", message)
 
     def _speed_worker(self) -> None:
         """把连续的速度调整合并成一次下发。"""
@@ -1131,6 +1315,7 @@ class BigCarController:
             "battery": self.battery_state(),
             "live": self.live.status(),
             "speed": self._speed_dispatch_state(stage, live_topics),
+            "convoy_control": self.convoy_control_state(),
             "maps": self.list_files(".pcd"),
             "routes": self.list_files(".csv"),
             "selected_map": str(self.config.get("selected_map", "")),
@@ -1453,6 +1638,12 @@ class BigCarController:
         with self._lock:
             self._emergency = False
             self._last_error = None
+            self._convoy_control = {
+                "active": False, "mode": "clear",
+                "commanded_speed_mps": float(self.parameters()["speed_limit_mps"]),
+                "session": "", "sequence": -1, "event_id": "", "detail": "", "updated": time.time(),
+                "_expires_at": None, "_hold_until": None, "_after_speed_mps": None,
+            }
         self._ros_cache = (0.0, set(), set())
         self._live_cache = (0.0, set())
         self.log("INFO", "system", "操作流程已安全重置，可从底盘与雷达重新开始")
@@ -1467,10 +1658,13 @@ class BigCarController:
         allowed = {
             "environment_check", "start_hardware", "start_autoware", "start_localization",
             "load_route", "start_tracking", "launch_rviz", "restart_workflow",
-            "save_selection", "update_parameters", "set_speed",
+            "save_selection", "update_parameters", "set_speed", "convoy_control",
         }
         if action not in allowed:
             raise ControllerError("不允许的控制动作")
+        if action == "convoy_control":
+            result = self.apply_convoy_control(data)
+            return f"编队速度已设为 {result['commanded_speed_mps']:.2f} m/s（{result['mode']}）"
         if action == "set_speed":
             # 速度必须立即生效，所以不进 worker 队列：直接保存 + 下发，
             # 否则拖滑杆时会被 _busy 锁串行化成一次一个。

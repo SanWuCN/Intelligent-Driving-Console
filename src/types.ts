@@ -76,6 +76,16 @@ export interface SpeedState {
   detail: string
 }
 
+export interface ConvoyControlState {
+  active: boolean
+  mode: 'clear' | 'boost' | 'slow' | 'hold' | 'safety_stop'
+  commanded_speed_mps: number
+  nominal_speed_mps: number
+  hold_remaining_seconds: number
+  detail: string
+  updated: number | null
+}
+
 export interface ConsoleState {
   version: string
   simulated: boolean
@@ -92,6 +102,7 @@ export interface ConsoleState {
   battery: BatteryState | null
   live: LiveStatus
   speed: SpeedState
+  convoy_control?: ConvoyControlState
   maps: ConsoleFile[]
   routes: ConsoleFile[]
   selected_map: string

@@ -26,12 +26,12 @@ for IP in "$@"; do
     echo "  跳过：SSH 不可达（车辆离线？）"; continue
   fi
   STAMP=$(date +%Y%m%d-%H%M%S)
-  remote "$IP" "mkdir -p $DEST/backups/deploy-$STAMP && cp -a $DEST/backend/app.py $DEST/backend/controller.py $DEST/backend/ros_probe.py $DEST/backups/deploy-$STAMP/ 2>/dev/null; cp -a $DEST/dist $DEST/backups/deploy-$STAMP/dist 2>/dev/null; cp -a /etc/NetworkManager/conf.d/zz-bigcar-wifi-powersave.conf /etc/systemd/system/bigcar-wifi-watchdog.service /usr/local/sbin/bigcar-wifi-watchdog $DEST/backups/deploy-$STAMP/ 2>/dev/null; true"
+  remote "$IP" "mkdir -p $DEST/backups/deploy-$STAMP && cp -a $DEST/backend/app.py $DEST/backend/controller.py $DEST/backend/ros_probe.py $DEST/backend/convoy_probe.py $DEST/backups/deploy-$STAMP/ 2>/dev/null; cp -a $DEST/dist $DEST/backups/deploy-$STAMP/dist 2>/dev/null; cp -a /etc/NetworkManager/conf.d/zz-bigcar-wifi-powersave.conf /etc/systemd/system/bigcar-wifi-watchdog.service /usr/local/sbin/bigcar-wifi-watchdog $DEST/backups/deploy-$STAMP/ 2>/dev/null; true"
   echo "  已备份到 backups/deploy-$STAMP"
 
   scp -q -o ConnectTimeout=10 \
     "$HERE/backend/app.py" "$HERE/backend/controller.py" \
-    "$HERE/backend/ros_bridge.py" "$HERE/backend/ros_probe.py" \
+    "$HERE/backend/ros_bridge.py" "$HERE/backend/ros_probe.py" "$HERE/backend/convoy_probe.py" \
     "nvidia@$IP:$DEST/backend/"
   scp -q -o ConnectTimeout=10 \
     "$HERE/deploy/wifi-watchdog.sh" \

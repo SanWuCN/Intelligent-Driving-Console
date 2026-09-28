@@ -89,6 +89,12 @@ class ConsoleHandler(SimpleHTTPRequestHandler):
             if parsed.path == "/api/state":
                 self._json(self.controller.snapshot())
                 return
+            if parsed.path == "/api/convoy":
+                if not self._authorized():
+                    self._json({"error": "控制令牌无效，无法读取编队位置"}, HTTPStatus.UNAUTHORIZED)
+                    return
+                self._json(self.controller.convoy_snapshot())
+                return
             if parsed.path == "/api/route":
                 name = parse_qs(parsed.query).get("file", [""])[0]
                 self._json(self.controller.route_data(name))

@@ -23,7 +23,9 @@ mkdir -p "$PKG/backend" "$PKG/runtime" "$PKG/docs" "$PKG/public" "$PKG/deploy"
 
 # 本机管理平台：只需要这几个后端文件
 cp "$HERE/backend/fleet.py" "$HERE/backend/app.py" "$HERE/backend/controller.py" \
-   "$HERE/backend/ros_probe.py" "$HERE/backend/ros_bridge.py" "$PKG/backend/"
+   "$HERE/backend/ros_probe.py" "$HERE/backend/ros_bridge.py" \
+   "$HERE/backend/convoy_coordinator.py" "$HERE/backend/convoy_policy.py" \
+   "$PKG/backend/"
 cp -R "$HERE/dist" "$PKG/dist"
 cp -R "$HERE/public/." "$PKG/public/" 2>/dev/null || true
 cp "$HERE/docs/FLEET.md" "$HERE/docs/LIVE_VIEW.md" "$PKG/docs/" 2>/dev/null || true
@@ -108,6 +110,7 @@ cat > "$PKG/README-Windows.txt" <<'TXT'
 四、能做什么
   · 车辆管理：在线状态、步骤进度、电量/CPU/温度、打开该车控制台、屏幕监看、急停。
   · 批量任务：勾选车辆 → 选地图与路径 → 一键启动批量流程。
+  · 编队防碰：同一批同一路线的车辆每 3 秒同步路径位置，自动调整速度和间距。
   · 任务记录：步骤账本、事件、导出 CSV / JSON。
   · 实时地图与雷达：在车辆卡片上点「打开控制台」，进入车端页面的「实时地图与雷达」，
     可以看到点云地图、路线、实时位姿、激光雷达点云和行驶轨迹。

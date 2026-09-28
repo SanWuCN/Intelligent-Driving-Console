@@ -67,6 +67,20 @@
 
 Pure Pursuit 必须使用 `publishes_for_steering_robot:=true`，否则只发布 `/twist_raw`，不会产生底盘需要的 `/ctrl_cmd`。控制台以 `/ctrl_cmd` 真实消息作为“循迹运行中”判据。
 
+## 多车编队间距闭环
+
+```text
+各车 /current_pose → 车端 /api/convoy → 本机 convoy_coordinator（3 s）
+                                           │ 共同 CSV 路径投影 / 前后车间距
+                                           ▼
+                           /api/action convoy_control 速度租约
+                                           │
+                                           ▼
+                    Waypoint Replanner + Pure Pursuit 临时速度上限
+```
+
+编队速度是非持久覆盖，不会修改操作员设定的基准速度。停车 5 秒由车端单调定时器执行；管理端断线时前车提速自动失效，后车的停车/减速约束则失效安全为保持停车。
+
 ## RViz 画面
 
 前端使用 noVNC，后端通过只能使用一次、有效期 30 秒的会话票据，将 WebSocket 双向代理到本机 x11vnc `127.0.0.1:5900`。该链路可以直接交互车载 `1920×1080` X11 桌面和 RViz。`/api/rviz.mjpeg` 仍保留为只读诊断降级通道。

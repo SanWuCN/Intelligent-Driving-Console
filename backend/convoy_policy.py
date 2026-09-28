@@ -1,4 +1,4 @@
-"""Read-only route projection and following recommendations; never commands ROS."""
+"""Pure route projection and convoy spacing policy; never commands ROS."""
 import csv
 import math
 
@@ -17,16 +17,13 @@ class LoopRoute:
                 clean.append(point)
         if len(clean) < 4:
             raise ValueError('route needs at least four points')
-        # A recording may end just beyond its start. Remove that short reversed seam.
-        while len(clean) > 4 and distance(clean[-1], clean[0]) < 1:
-            last, prior, first = clean[-1], clean[-2], clean[0]
-            dot = ((last[0] - prior[0]) * (first[0] - last[0]) +
-                   (last[1] - prior[1]) * (first[1] - last[1]))
-            if dot > 0:
-                break
-            clean.pop()
-        if distance(clean[-1], clean[0]) > 2:
+        closure_gap = distance(clean[-1], clean[0])
+        if closure_gap > 2:
             raise ValueError('route is not a closed loop (endpoint gap > 2m)')
+        # Autoware CSV files commonly repeat the first row at the end.  Keep a
+        # single copy so the explicit wraparound segment below is well formed.
+        if closure_gap <= .01:
+            clean.pop()
         self.points, self.segments, self.length = clean, [], 0.0
         for a, b in zip(clean, clean[1:] + clean[:1]):
             length = distance(a, b)
@@ -69,29 +66,59 @@ class LoopRoute:
         return s, error
 
 
-class FollowingAdvice:
-    def __init__(self, hold_seconds=0):
-        self.hold_seconds = hold_seconds
-        self.stopped_at = None
-        self.clear_since = None
+class SpacingState:
+    """State machine for one rear/front pair on the same closed route.
 
-    def update(self, reference_gap, velocity, now):
-        # Reference-point distance includes a provisional 2m vehicle-length margin.
-        stop_gap = 5 + velocity + velocity * velocity
-        release_gap = stop_gap + 2
-        if reference_gap <= stop_gap:
-            if self.stopped_at is None:
-                self.stopped_at = now
-            self.clear_since = None
-        elif self.stopped_at is not None:
-            if reference_gap < release_gap:
-                self.clear_since = None
-            elif self.clear_since is None:
-                self.clear_since = now
-            elif now - self.clear_since >= 2 and now - self.stopped_at >= self.hold_seconds:
-                self.stopped_at = self.clear_since = None
-        if self.stopped_at is not None:
-            return 'stop', 0.0, stop_gap
-        if reference_gap < release_gap + 1:
-            return 'slow', min(2, max(0, (reference_gap - stop_gap) / 3)), stop_gap
-        return 'clear', 2.0, stop_gap
+    A gap below 2 m starts a mandatory five-second hold.  Once the hold has
+    elapsed the pair stays in spacing mode until its along-route gap is above
+    5 m.  Keeping this as an explicit state prevents a noisy 2 m sample from
+    repeatedly restarting the five-second timer.
+    """
+
+    def __init__(self, stop_gap=2.0, release_gap=5.0, hold_seconds=5.0):
+        self.stop_gap = float(stop_gap)
+        self.release_gap = float(release_gap)
+        self.hold_seconds = float(hold_seconds)
+        self.phase = 'clear'
+        self.triggered_at = None
+        self.event = 0
+
+    def update(self, gap, now):
+        gap = float(gap)
+        now = float(now)
+        if not math.isfinite(gap) or gap < 0:
+            raise ValueError('invalid route gap')
+
+        if self.phase == 'clear' and gap < self.stop_gap:
+            self.phase = 'hold'
+            self.triggered_at = now
+            self.event += 1
+
+        if self.phase == 'hold' and now - self.triggered_at >= self.hold_seconds:
+            self.phase = 'spacing'
+
+        if self.phase in ('hold', 'spacing') and gap > self.release_gap:
+            # The rear car must still complete the full five-second stop even
+            # if the leader opens the gap immediately.
+            if self.phase != 'hold' or now - self.triggered_at >= self.hold_seconds:
+                self.phase = 'clear'
+                self.triggered_at = None
+
+        remaining = 0.0
+        if self.phase == 'hold':
+            remaining = max(0.0, self.hold_seconds - (now - self.triggered_at))
+        return self.phase, remaining, self.event
+
+
+def ordered_gaps(progress, route_length):
+    """Return ``(rear, front, gap)`` pairs for immediate neighbours."""
+    if route_length <= 0:
+        raise ValueError('route length must be positive')
+    ordered = sorted(progress.items(), key=lambda item: item[1])
+    if len(ordered) < 2:
+        return []
+    pairs = []
+    for index, (rear, rear_s) in enumerate(ordered):
+        front, front_s = ordered[(index + 1) % len(ordered)]
+        pairs.append((rear, front, (front_s - rear_s) % route_length))
+    return pairs
